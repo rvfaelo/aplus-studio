@@ -1,0 +1,248 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>A+ Studio</title>
+  <link rel="stylesheet" href="popup.css">
+  <style>
+    input, textarea, select { display:block; width:100%; border:1px solid #cbd6d1; border-radius:10px; background:#fff; padding:10px 11px; color:#14251e; outline:none; }
+    input:focus, textarea:focus, select:focus { border-color:#91bd25; box-shadow:0 0 0 3px rgba(178,225,70,.22); }
+    .secondary { width:100%; margin-top:8px; background:#f2f9df; border-color:#b9d675; color:#3d5715; }
+    .secondary:hover { background:#e8f4c8; }
+  </style>
+  <script type="module" src="popup.js"></script>
+</head>
+<body>
+  <header>
+    <span class="brand">A+</span>
+    <div>
+      <h1>Studio</h1>
+      <p>Planejar, gerar, preencher e auditar</p>
+    </div>
+    <span class="language">PT-BR</span>
+  </header>
+  <main>
+    <p class="intro">Abra a edição do A+ com os seis módulos adicionados e expandidos. Depois, informe o produto.</p>
+    <button id="openDashboard" class="primary dashboard-button" type="button">Abrir painel A+ Studio 1.5</button>
+    <form id="form">
+      <label for="title">Título do produto</label>
+      <input id="title" name="title" type="text" maxlength="1000" required disabled placeholder="Ex.: Organizador de maquiagem em acrílico">
+
+      <label for="description">Descrição e informações reais</label>
+      <textarea id="description" name="description" maxlength="18000" rows="5" required disabled placeholder="Cole características, medidas, materiais, usos e itens incluídos."></textarea>
+      <p class="hint" id="draftHint" aria-live="polite">Carregando dados salvos…</p>
+
+      <label for="model">Modelo de IA</label>
+      <select id="model" disabled>
+        <option value="auto/economico">Automático econômico (recomendado)</option>
+        <option value="divider-kira" disabled>── KiraAI ──</option>
+        <option value="kira/qwen3.8-flash">Qwen 3.8 Flash (KiraAI)</option>
+        <option value="kira/glm-5.3-free">GLM 5.3 Free (KiraAI)</option>
+        <option value="divider-gemini" disabled>── Google Gemini ──</option>
+        <option value="gemini/gemini-3.5-flash">Gemini 3.5 Flash (recomendado)</option>
+        <option value="gemini/gemini-3.5-flash-lite">Gemini 3.5 Flash-Lite (mais econômico)</option>
+        <option value="divider-groq" disabled>── Groq ──</option>
+        <option value="openai/gpt-oss-20b">GPT-OSS 20B (recomendado - rápido)</option>
+        <option value="openai/gpt-oss-120b">GPT-OSS 120B (maior qualidade)</option>
+        <option value="qwen/qwen3.8-27b">Qwen 3.8 27B (muito bom)</option>
+        <option value="qwen/qwen3.6-27b">Qwen 3.6 27B</option>
+        <option value="divider-deepseek" disabled>── DeepSeek ──</option>
+        <option value="deepseek/deepseek-flash">DeepSeek Flash (API oficial, paga)</option>
+        <option value="custom">Outro modelo</option>
+      </select>
+      <input id="customModel" type="text" maxlength="100" aria-label="Nome do modelo" placeholder="Digite o nome exato do modelo" hidden disabled>
+
+      <details id="options">
+        <summary>Opções</summary>
+        <div class="options-body">
+          <div class="columns">
+            <div>
+              <label for="faqCount">Linhas de FAQ</label>
+              <input id="faqCount" type="number" value="5" min="1" max="6">
+            </div>
+            <div>
+              <label for="specCount">Especificações</label>
+              <input id="specCount" type="number" value="6" min="1" max="15">
+            </div>
+          </div>
+          <p class="hint">Usadas quando a página não indica as quantidades. Linhas identificadas na página têm prioridade. A Amazon aceita até 6 perguntas e 15 especificações.</p>
+        </div>
+      </details>
+
+      <button id="generate" class="primary" type="submit">Gerar e Preencher <span aria-hidden="true">↗</span></button>
+      <button id="cancel" type="button" hidden>Cancelar operação</button>
+
+      <details id="keySettings" class="key-settings">
+        <summary>
+          <span class="key-summary">
+            <span class="key-title">API Key do modelo selecionado</span>
+            <span id="keyStatus" class="key-status">Não configurada</span>
+          </span>
+        </summary>
+        <div class="key-body">
+          <label for="keyProvider">Chave que deseja configurar</label>
+          <select id="keyProvider"><option value="gemini">Google Gemini</option><option value="kira">KiraAI.vn</option><option value="groq">Groq</option><option value="deepseek">DeepSeek</option></select>
+          <p class="hint" id="keyHint" aria-live="polite">Para Gemini, use a chave gratuita criada no Google AI Studio.</p>
+
+          <div id="keySavedView" class="key-saved-view" hidden>
+            <div class="key-saved-field" aria-label="Chave aplicada e salva">
+              <span id="keyMask">••••••••••••</span>
+            </div>
+            <div class="key-actions">
+              <button id="replaceKey" class="secondary" type="button">Substituir</button>
+              <button id="forgetKey" class="danger" type="button">Remover</button>
+            </div>
+          </div>
+
+          <div id="keyInputView" class="key-input-view">
+            <div class="key-row">
+              <input id="apiKey" name="apiKey" type="password" autocomplete="off" spellcheck="false" maxlength="1000" placeholder="Cole sua API Key" aria-label="API Key do modelo selecionado">
+              <button id="toggleKey" type="button" aria-label="Mostrar chave">Mostrar</button>
+            </div>
+            <button id="applyKey" class="secondary" type="button">Aplicar e salvar chave</button>
+            <button id="cancelReplace" class="text-button" type="button" hidden>Cancelar</button>
+          </div>
+          <div class="cloud-key">
+            <div class="cloud-key-heading"><strong>Sincronização entre computadores</strong><span id="cloudKeyStatus" class="key-status">Não configurada</span></div>
+            <p id="cloudKeyHint" class="hint">A chave é criptografada antes de ir para o Chrome Sync. A senha não é salva.</p>
+            <input id="cloudPassphrase" type="password" autocomplete="new-password" minlength="10" maxlength="200" placeholder="Senha de sincronização, mínimo 10 caracteres">
+            <div class="cloud-actions"><button id="cloudSaveKey" class="secondary" type="button">Salvar na nuvem</button><button id="cloudUnlockKey" type="button">Desbloquear neste PC</button></div>
+            <button id="cloudRemoveKey" class="text-button danger" type="button">Apagar cópia da nuvem</button>
+          </div>
+        </div>
+      </details>
+    </form>
+
+    <section id="statusBox" class="status-box" aria-live="polite">
+      <span class="status-dot"></span>
+      <p id="status">Pronto para começar.</p>
+    </section>
+    <p id="rateLimit" class="rate-limit" hidden aria-live="polite"></p>
+    <button id="retryLoad" class="secondary" type="button" hidden>Tentar novamente</button>
+
+    <details id="apiDiagnostic" hidden>
+      <summary>Detalhes do erro da API</summary>
+      <textarea id="diagnosticText" readonly rows="10" aria-label="Diagnóstico do erro da API"></textarea>
+      <button id="copyDiagnostic" type="button">Copiar diagnóstico</button>
+    </details>
+
+    <div class="toolbar">
+      <button id="scan" type="button">Analisar campos</button>
+      <button id="map" type="button">Mapear campos</button>
+    </div>
+
+    <section id="results" hidden>
+      <div class="result-heading">
+        <h2>Resultado</h2>
+        <button id="export" class="text-button" type="button">Baixar textos</button>
+      </div>
+      <div class="toolbar">
+        <button id="refill" type="button">Preencher novamente</button>
+        <button id="undo" type="button">Desfazer</button>
+      </div>
+      <p class="hint">Preencher novamente usa os textos já gerados, sem chamar a API.</p>
+      <div id="warnings"></div>
+      <details>
+        <summary id="reportTitle">Campos e textos</summary>
+        <div id="report"></div>
+      </details>
+    </section>
+
+    <details id="planningSection" class="planning-section" open>
+      <summary>
+        <span class="key-summary">
+          <span class="key-title">Planejamento e Qualidade</span>
+          <span id="planningBadge" class="key-status">Novo</span>
+        </span>
+      </summary>
+      <div class="planning-body">
+        <p class="hint">Usa o título e a descrição acima. O planejamento não preenche a Amazon e nunca inventa dados ausentes.</p>
+        <button id="planningRun" class="secondary" type="button">Analisar produto e criar plano</button>
+        <button id="qualityRun" type="button">Avaliar textos gerados</button>
+        <button id="planningCancel" type="button" hidden>Cancelar planejamento</button>
+        <div id="planningStatusBox" class="audit-status" aria-live="polite">
+          <span class="status-dot"></span>
+          <p id="planningStatus">Pronto para analisar.</p>
+        </div>
+        <section id="planningResults" hidden>
+          <div class="result-heading">
+            <h2>Plano do produto</h2>
+            <div class="planning-actions">
+              <button id="planningCopyAll" class="text-button" type="button">Copiar prompt completo</button>
+              <button id="planningExport" class="text-button" type="button">Baixar plano</button>
+            </div>
+          </div>
+          <div id="diagnosisReport"></div>
+          <details id="missingDetails">
+            <summary id="missingTitle">Informações ausentes</summary>
+            <div id="missingReport" class="compact-report"></div>
+          </details>
+          <details>
+            <summary id="benefitsTitle">Características e benefícios</summary>
+            <div id="benefitsReport" class="compact-report"></div>
+          </details>
+          <details>
+            <summary id="briefsTitle">Briefings de imagens</summary>
+            <div id="briefsReport" class="compact-report"></div>
+          </details>
+        </section>
+        <section id="qualityResults" hidden>
+          <div class="quality-heading">
+            <div id="qualityScore" class="quality-score">0</div>
+            <div><strong>Qualidade do A+</strong><p id="qualitySummary">Gere os textos para avaliar.</p></div>
+          </div>
+          <div id="qualityCriteria"></div>
+          <div id="qualityIssues"></div>
+        </section>
+        <button id="planningClear" class="text-button danger" type="button">Limpar planejamento</button>
+      </div>
+    </details>
+
+    <details id="auditSection" class="audit-section">
+      <summary>
+        <span class="key-summary">
+          <span class="key-title">Produtos sem A+</span>
+          <span id="auditBadge" class="key-status">0 produtos</span>
+        </span>
+      </summary>
+      <div class="audit-body">
+        <p class="hint">Cole os ASINs ou capture os itens carregados em “Gerenciar todos os produtos”. A verificação consulta apenas a página pública da Amazon e não usa a API de geração.</p>
+        <label for="asinList">ASINs para verificar</label>
+        <textarea id="asinList" rows="4" maxlength="4000" spellcheck="false" placeholder="B0CFYV1P8T&#10;B0XXXXXXXX"></textarea>
+        <p id="asinHint" class="hint">Um ASIN por linha. Máximo de 250 por verificação.</p>
+        <div class="toolbar audit-toolbar">
+          <button id="auditCapture" type="button">Capturar da página</button>
+          <button id="auditClear" type="button">Limpar lista</button>
+        </div>
+        <button id="auditRun" class="secondary" type="button">Verificar A+ publicado</button>
+        <button id="auditCancel" type="button" hidden>Cancelar verificação</button>
+        <div id="auditStatusBox" class="audit-status" aria-live="polite">
+          <span class="status-dot"></span>
+          <p id="auditStatus">Pronto para verificar.</p>
+        </div>
+        <section id="auditResults" hidden>
+          <div class="result-heading">
+            <h2 id="auditSummary">Resultado</h2>
+            <button id="auditExport" class="text-button" type="button">Baixar CSV</button>
+          </div>
+          <label for="auditFilter">Mostrar</label>
+          <select id="auditFilter">
+            <option value="all">Todos os produtos</option>
+            <option value="missing">Sem A+ publicado</option>
+            <option value="published">Com A+ publicado</option>
+            <option value="issues">Não verificados ou com erro</option>
+          </select>
+          <div id="auditReport"></div>
+          <p class="hint">“Sem A+ publicado” significa que nenhum conteúdo A+ foi encontrado na página que o cliente acessa. Um projeto em rascunho, análise ou rejeitado ainda pode existir no Seller Central.</p>
+        </section>
+      </div>
+    </details>
+
+    <footer>
+      <a href="#" id="openChangelog" class="version-link">Versão 1.5.0</a> — nova interface, quatro servidores e troca automática.<br>
+      Os campos identificados serão substituídos. Revise antes de salvar na Amazon.
+    </footer>
+  </main>
+</body>
+</html>

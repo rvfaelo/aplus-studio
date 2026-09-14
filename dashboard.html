@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>A+ Studio 1.5.0</title>
+  <link rel="stylesheet" href="dashboard.css">
+  <script type="module" src="dashboard.js"></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-brand">
+      <div class="logo" aria-hidden="true">A+</div>
+      <div><h1>A+ Studio</h1><p>Produção, revisão e preenchimento</p></div>
+    </div>
+    <div class="topbar-actions">
+      <div id="jobStatus" class="job-status"><span class="status-indicator" aria-hidden="true"></span>Pronto</div>
+      <button id="apiSettings" class="button-with-icon"><span aria-hidden="true">◆</span> Chaves de API</button>
+      <button id="newProject" class="primary button-with-icon"><span aria-hidden="true">＋</span> Novo projeto</button>
+    </div>
+  </header>
+
+  <div class="shell">
+    <aside class="sidebar">
+      <div class="side-head"><strong>Produtos</strong><span id="projectCount">0</span></div>
+      <input id="projectSearch" type="search" placeholder="Buscar ASIN ou produto">
+      <div class="side-actions">
+        <button id="queueSelected">Gerar selecionados</button>
+        <button id="queueCancel" hidden>Cancelar fila</button>
+      </div>
+      <div id="projectList" class="project-list"></div>
+      <details class="batch-box">
+        <summary>Adicionar vários ASINs</summary>
+        <p>Uma linha por produto: <code>ASIN; título; descrição</code>. Título e descrição podem ficar vazios para importar da Amazon depois.</p>
+        <textarea id="batchInput" rows="6" placeholder="B0XXXXXXXX; Nome do produto; Informações reais"></textarea>
+        <button id="batchAdd">Criar projetos</button>
+      </details>
+    </aside>
+
+    <main class="workspace">
+      <section id="emptyState" class="empty-state">
+        <div class="empty-icon">A+</div>
+        <h2>Comece por um produto</h2>
+        <p>Crie um projeto ou adicione ASINs em massa. A geração cria rascunhos; nada é publicado automaticamente.</p>
+        <button id="emptyNew" class="primary">Criar primeiro projeto</button>
+      </section>
+
+      <section id="editor" hidden>
+        <div class="project-header">
+          <div><span id="projectStatus" class="pill">Novo</span><h2 id="projectName">Projeto sem título</h2><p id="projectMeta"></p></div>
+          <div class="header-actions"><button id="deleteProject" class="danger">Excluir</button><button id="saveProject">Salvar</button></div>
+        </div>
+
+        <nav class="tabs" aria-label="Etapas do projeto">
+          <button data-tab="product" class="active">1. Produto</button>
+          <button data-tab="texts">2. Textos A+</button>
+          <button data-tab="images">3. Imagens</button>
+          <button data-tab="validation">4. Validação</button>
+          <button data-tab="publish">5. Preencher</button>
+        </nav>
+
+        <div id="tab-product" class="tab-panel">
+          <div class="grid two">
+            <section class="card product-card">
+              <div class="card-title-row"><span class="section-icon" aria-hidden="true">◇</span><div><h3>Informações do produto</h3><p>Dados principais do produto na Amazon.</p></div></div>
+              <label for="asin">ASIN</label>
+              <div class="inline"><input id="asin" maxlength="10" placeholder="B0XXXXXXXX"><button id="importAsin">Carregar produto</button></div>
+              <p class="muted">Se a consulta for bloqueada, abra o produto, conclua a verificação da Amazon e volte para capturar a página.</p>
+              <div class="inline"><button id="openProduct">Abrir produto na Amazon</button><button id="captureProduct" disabled>Capturar página aberta</button></div>
+              <label for="title">Título</label><input id="title" maxlength="1000" placeholder="Nome completo do produto">
+              <label for="description">Descrição e informações reais</label>
+              <textarea id="description" rows="10" maxlength="18000" placeholder="Cole somente informações confirmadas."></textarea>
+            </section>
+            <section class="card facts-card">
+              <div class="card-head"><div class="card-title-row"><span class="section-icon neutral" aria-hidden="true">▤</span><div><h3>Ficha factual</h3><p>A IA só pode usar fatos marcados como confirmados.</p></div></div><button id="addFact" class="button-with-icon"><span aria-hidden="true">＋</span> Adicionar fato</button></div>
+              <div class="facts-table" role="table" aria-label="Ficha factual">
+                <div class="facts-head" role="row"><span>Campo</span><span>Valor confirmado</span><span>Origem</span><span>Status</span><span>Ações</span></div>
+                <div id="facts"></div>
+              </div>
+              <div class="callout"><strong>Origem dos fatos</strong><p>Textos gerados mostram se encontram apoio no título, descrição ou nesta ficha. Inferências ficam sinalizadas para revisão.</p></div>
+            </section>
+          </div>
+          <section class="card options-card">
+            <h3>Configuração</h3>
+            <div class="grid three">
+              <label>Modelo<select id="model"><option value="auto/economico">Automático econômico</option><option value="divider-kira" disabled>── KiraAI ──</option><option value="kira/qwen3.8-flash">Qwen 3.8 Flash (KiraAI)</option><option value="kira/glm-5.3-free">GLM 5.3 Free (KiraAI)</option><option value="divider-gemini" disabled>── Google Gemini ──</option><option value="gemini/gemini-3.5-flash">Gemini 3.5 Flash</option><option value="gemini/gemini-3.5-flash-lite">Gemini 3.5 Flash-Lite</option><option value="divider-groq" disabled>── Groq ──</option><option value="openai/gpt-oss-20b">GPT-OSS 20B (Groq)</option><option value="openai/gpt-oss-120b">GPT-OSS 120B (Groq)</option><option value="qwen/qwen3.8-27b">Qwen 3.8 27B (Groq)</option><option value="divider-deepseek" disabled>── DeepSeek ──</option><option value="deepseek/deepseek-flash">DeepSeek Flash (API oficial, paga)</option></select></label>
+              <label>FAQ<input id="faqCount" type="number" min="1" max="6" value="5"></label>
+              <label>Especificações<input id="specCount" type="number" min="1" max="15" value="6"></label>
+            </div>
+            <div class="action-row"><button id="createPlan">Criar planejamento + textos A+</button><button id="generateDraft" class="primary">Gerar somente textos A+</button></div>
+          </section>
+        </div>
+
+        <div id="tab-texts" class="tab-panel" hidden>
+          <section class="card">
+            <div class="card-head"><div><h3>Editor dos textos</h3><p>Edite, copie ou regenere apenas o campo necessário. Alterações removem a aprovação.</p></div><button id="exportTexts">Baixar textos</button></div>
+            <div id="textEditor" class="text-editor"></div>
+          </section>
+        </div>
+
+        <div id="tab-images" class="tab-panel" hidden>
+          <section class="card">
+            <div class="card-head"><div><h3>Briefings de imagens</h3><p>Oito imagens separadas, nos tamanhos do A+ Premium.</p></div><button id="copyAllPrompts">Copiar prompt completo</button></div>
+            <div id="imageBriefs"></div>
+          </section>
+        </div>
+
+        <div id="tab-validation" class="tab-panel" hidden>
+          <div class="grid two">
+            <section class="card score-card"><div id="score" class="score">—</div><div><h3>Qualidade do A+</h3><p id="scoreSummary">Valide o projeto para calcular a nota.</p></div></section>
+            <section class="card"><h3>Estado do projeto</h3><div id="validationSummary"></div></section>
+          </div>
+          <section class="card"><div class="card-head"><h3>Revisão automática</h3><button id="validateProject">Validar novamente</button></div><div id="validationIssues"></div></section>
+          <section class="card"><h3>Mapa de cobertura</h3><p class="muted">Cada texto mostra sua função no A+. Possíveis repetições são incluídas na nota de variedade.</p><div id="coverageMap"></div></section>
+        </div>
+
+        <div id="tab-publish" class="tab-panel" hidden>
+          <section class="card publish-card">
+            <h3>Revisar, aprovar e preencher</h3>
+            <ol><li>Revise todos os textos e informações sinalizadas.</li><li>Valide limites, fatos e especificações.</li><li>Aprove este produto individualmente.</li><li>Abra a edição A+ no Seller Central em outra aba da mesma janela e espere terminar de carregar. Depois volte ao Studio e clique no botão abaixo.</li></ol>
+            <div id="approvalState" class="callout"></div>
+            <div class="action-row"><button id="approveProject">Aprovar conteúdo</button><button id="fillAmazon" class="primary">Preencher aba da Amazon aberta</button></div>
+            <p class="muted">A extensão não salva, envia para análise nem publica o A+. As imagens continuam com upload manual.</p>
+          </section>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <div id="toast" class="toast" hidden></div>
+  <dialog id="apiDialog">
+    <form method="dialog" class="dialog-card">
+      <div class="card-head"><div><h3>API Key do modelo selecionado</h3><p id="apiState">Verificando configuração…</p></div><button value="cancel" aria-label="Fechar">×</button></div>
+      <label for="keyProvider">Provedor</label><select id="keyProvider"><option value="gemini">Google Gemini</option><option value="kira">KiraAI.vn</option><option value="groq">Groq</option><option value="deepseek">DeepSeek</option></select>
+      <div id="savedKeyBox" hidden><label for="savedKeyMask">Chave salva</label><input id="savedKeyMask" readonly aria-label="Chave salva mascarada"><button id="replaceSavedKey" type="button">Substituir chave</button></div>
+      <div id="newKeyBox"><label for="apiKey">Nova chave</label><input id="apiKey" type="password" autocomplete="off" placeholder="Cole sua API Key"></div>
+      <p class="muted">A chave fica salva somente neste navegador e não é enviada aos produtos ou à página da Amazon.</p>
+      <div class="action-row"><button id="removeKey" type="button" class="danger">Remover chave</button><button id="saveKey" type="button" class="primary">Aplicar e salvar</button></div>
+    </form>
+  </dialog>
+</body>
+</html>
