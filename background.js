@@ -1,4 +1,4 @@
-import {DEFAULTS, settings, isSellerURL, makeSlots} from "./shared.js";
+import {DEFAULTS, settings, isSellerURL, makeSlots, PREMIUM_EDITOR_URL, isPremiumEditorURL} from "./shared.js";
 import {generateTexts} from "./openai.js";
 import {writeAmazonField} from "./page-writer.js";
 import {normalizeAsins, inspectProductHTML, scanSellerCatalogPage} from "./catalog-audit.js";
@@ -318,16 +318,20 @@ function state(patch) {
 
 async function tabById(id, expectedURL) {
   let tab;
-  try { tab = await chrome.tabs.get(id); } catch { throw new Error("A aba foi fechada. Abra a edição do A+ no Seller Central."); }
-  if (!isSellerURL(tab.url)) throw new Error("Abra uma página de edição do A+ no Amazon Seller Central e clique na extensão.");
+  try { tab = await chrome.tabs.get(id); } catch { throw new Error(`A aba foi fechada. Abra o editor A+ Premium: ${PREMIUM_EDITOR_URL}`); }
+  if (!isPremiumEditorURL(tab.url)) {
+    const redirected = isSellerURL(tab.url) ? "A Amazon redirecionou a aba para outra página do Seller Central. " : "";
+    throw new Error(`${redirected}O preenchimento funciona exclusivamente no editor A+ Premium: ${PREMIUM_EDITOR_URL}`);
+  }
   if (expectedURL && tab.url !== expectedURL) throw new Error("A aba mudou de página. Gere novamente na edição correta.");
   return tab;
 }
 
 async function connect(tabId) {
+  const expectedBridgeVersion = "1.5.5";
   let tab = await tabById(tabId);
   if (tab.status === "loading") {
-    for (let attempt = 0; attempt < 20 && tab.status === "loading"; attempt++) {
+    for (let attempt = 0; attempt < 80 && tab.status === "loading"; attempt++) {
       await new Promise(resolve => setTimeout(resolve, 250));
       tab = await tabById(tabId);
     }
@@ -336,13 +340,15 @@ async function connect(tabId) {
 
   // Nas páginas abertas depois da instalação, o manifesto já carrega estes scripts.
   // A injeção abaixo recupera apenas abas que estavam abertas antes da atualização.
-  try {
-    const pong = await chrome.tabs.sendMessage(tabId, {channel: "aplus-page", action: "ping"});
-    if (pong?.ok && pong.data?.ready) {
-      const marker = await chrome.scripting.executeScript({target: {tabId}, world: "ISOLATED", func: () => location.href});
-      return {tabId, url: tab.url, documentId: marker[0]?.documentId};
-    }
-  } catch { /* A aba pode ser anterior à instalação ou à atualização. */ }
+  let pong = null;
+  try { pong = await chrome.tabs.sendMessage(tabId, {channel: "aplus-page", action: "ping"}); }
+  catch { /* A aba pode ser anterior à instalação. */ }
+  if (pong?.ok && pong.data?.ready) {
+    if (pong.data.bridgeVersion !== expectedBridgeVersion)
+      throw new Error("A aba da Amazon ainda está usando a versão anterior da extensão. Recarregue essa aba uma vez e clique em preencher novamente.");
+    const marker = await chrome.scripting.executeScript({target: {tabId}, world: "ISOLATED", func: () => location.href});
+    return {tabId, url: tab.url, documentId: marker[0]?.documentId};
+  }
 
   try {
     const injected = await chrome.scripting.executeScript({target: {tabId}, world: "ISOLATED", files: ["content-engine.js", "content.js"]});
@@ -663,9 +669,12 @@ async function handle(message) {
       if (!project.approved || project.status !== "approved") throw new Error("Aprove o projeto antes de preencher a Amazon.");
       const target = await connect(message.tabId); task.target = target;
       const inspected = await inspect(target, settings(project.config));
+      const found = inspected.scan.entries.filter(entry => entry.found).length;
+      if (!found) throw new Error("Nenhum campo A+ foi identificado nesta aba. Confirme que esta é a edição correta e mantenha os módulos expandidos.");
       const scan = await page(target, "scan", {slots: inspected.slots});
       const texts = Object.fromEntries(inspected.slots.map(slot => [slot.key, String(project.texts[slot.key] || "")]));
       const report = await page(target, "fill", {scanId: scan.scanId, slots: inspected.slots, texts});
+      if (!report.filled) throw new Error("A Amazon não confirmou nenhum campo preenchido. O texto não foi deixado apenas sobre o placeholder. Recarregue a edição A+ e tente novamente.");
       project.status = "filled"; project.updatedAt = Date.now(); project.approved = true;
       await upsertProject(project);
       return report;
@@ -696,7 +705,7 @@ chrome.runtime.onMessage.addListener((message, sender, reply) => {
     const target = active?.target;
     if (sender.id !== chrome.runtime.id || !sender.tab || !target || active.controller.signal.aborted ||
       sender.tab.id !== target.tabId || sender.documentId !== target.documentId ||
-      sender.url !== target.url || message.href !== target.url || !isSellerURL(sender.url) ||
+      sender.url !== target.url || message.href !== target.url || !isPremiumEditorURL(sender.url) ||
       !/^[a-f0-9-]{36}$/.test(message.marker) || typeof message.value !== "string" ||
       message.value.length > 20000 || typeof message.expectedBefore !== "string") {
       reply({ok: false, error: "Escrita fora da operação ou do documento ativo."}); return;

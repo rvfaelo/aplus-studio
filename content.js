@@ -1,4 +1,5 @@
 (() => {
+  const PAGE_BRIDGE_VERSION = "1.5.5";
   if (globalThis.__aplusPremiumInstalled) return;
   globalThis.__aplusPremiumInstalled = true;
   const E = globalThis.APlusEngine;
@@ -47,9 +48,9 @@
         if (current.limit !== null && text.length > current.limit) { row.detail = `A página aceita apenas ${current.limit} caracteres. Gere novamente para adaptar o texto.`; continue; }
         if (E.clean(target.before) === E.clean(text)) { row.status = "same"; row.detail = "O texto já está no campo."; continue; }
         const record = {el: target.el, before: target.before, written: text, key: slot.key, label: slot.label, href: plan.href};
-        changed.push(record);
         try {
           const ok = await E.write(target.el, text);
+          if (ok) changed.push(record);
           row.status = ok ? "filled" : "failed";
           row.detail = ok ? "Texto conferido no campo." : "O editor não confirmou o texto. Confira este campo.";
         } catch { row.status = "failed"; row.detail = "O editor recusou a alteração. Confira este campo."; }
@@ -143,7 +144,7 @@
   chrome.runtime.onMessage.addListener((message, sender, reply) => {
     if (sender.id !== chrome.runtime.id || message?.channel !== "aplus-page") return;
     const actions = {
-      ping: () => ({ready: true, href: location.href}),
+      ping: () => ({ready: true, href: location.href, bridgeVersion: PAGE_BRIDGE_VERSION}),
       scan: () => { if (busy) throw new Error("Aguarde o preenchimento terminar."); return scan(message.slots); },
       fill: () => fill(message), undo, map: () => mapper(message.slots),
       cancel: () => { cancelled = true; return {cancelled: true}; }

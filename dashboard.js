@@ -1,4 +1,4 @@
-import {makeSlots} from "./shared.js";
+import {makeSlots, PREMIUM_EDITOR_URL, isPremiumEditorURL} from "./shared.js";
 import {buildFullImagePrompt} from "./planning.js";
 import {createProject, evidenceFor, parseQueue, PROJECT_STATUS} from "./projects.js";
 import {connectPanel} from "./panel-connection.js";
@@ -6,32 +6,16 @@ import {providerForModel} from "./providers.js";
 
 const $ = id => document.getElementById(id);
 const send = connectPanel(chrome.runtime);
-const isSellerUrl = value => {
-  try {
-    const url = new URL(value || "");
-    return url.protocol === "https:" && /^sellercentral\.amazon\.(com\.br|com|ca|com\.mx|co\.uk|de|fr|it|es|nl|se|pl|com\.be|ie|co\.jp|in|com\.au|sg|ae|sa|com\.tr|co\.za)$/.test(url.hostname);
-  } catch { return false; }
-};
-const sellerTabId = async () => {
-  const [tab] = await chrome.tabs.query({active: true, currentWindow: true});
-  if (tab?.id && isSellerUrl(tab.url)) return tab.id;
-  const sellerTabs = await chrome.tabs.query({currentWindow: true, url: [
-    "https://sellercentral.amazon.com.br/*", "https://sellercentral.amazon.com/*",
-    "https://sellercentral.amazon.ca/*", "https://sellercentral.amazon.com.mx/*",
-    "https://sellercentral.amazon.co.uk/*", "https://sellercentral.amazon.de/*",
-    "https://sellercentral.amazon.fr/*", "https://sellercentral.amazon.it/*",
-    "https://sellercentral.amazon.es/*", "https://sellercentral.amazon.nl/*",
-    "https://sellercentral.amazon.se/*", "https://sellercentral.amazon.pl/*",
-    "https://sellercentral.amazon.com.be/*", "https://sellercentral.amazon.ie/*",
-    "https://sellercentral.amazon.co.jp/*", "https://sellercentral.amazon.in/*",
-    "https://sellercentral.amazon.com.au/*", "https://sellercentral.amazon.sg/*",
-    "https://sellercentral.amazon.ae/*", "https://sellercentral.amazon.sa/*",
-    "https://sellercentral.amazon.com.tr/*", "https://sellercentral.amazon.co.za/*"
-  ]});
-  const target = sellerTabs.find(item => item.id && isSellerUrl(item.url));
-  if (!target?.id) throw new Error("Abra a edição do A+ no Seller Central em uma aba desta janela. Depois volte ao Studio e clique em preencher.");
-  await chrome.tabs.update(target.id, {active: true});
-  return target.id;
+const premiumEditorTabId = async () => {
+  const tabs = await chrome.tabs.query({currentWindow: true});
+  const target = tabs.find(tab => Number.isInteger(tab?.id) && isPremiumEditorURL(tab.url));
+  if (target?.id) {
+    await chrome.tabs.update(target.id, {active: true});
+    return target.id;
+  }
+  const created = await chrome.tabs.create({url: PREMIUM_EDITOR_URL, active: true});
+  if (!created?.id) throw new Error("Não foi possível abrir o editor A+ Premium.");
+  return created.id;
 };
 
 let projects = [], activeId = "", projectJob = null, pollTimer, toastTimer;
@@ -249,7 +233,12 @@ $("replaceSavedKey").onclick = () => { $("newKeyBox").hidden=false; $("saveKey")
 $("saveProject").onclick = () => save(true).catch(error => toast(error.message, true));
 $("addFact").onclick = () => $("facts").append(factRow());
 $("projectSearch").addEventListener("input", renderProjects);
-for (const id of ["asin", "title", "description", "model", "faqCount", "specCount"]) $(id).addEventListener("input", markChanged);
+for (const id of ["asin", "title", "description", "faqCount", "specCount"]) $(id).addEventListener("input", markChanged);
+$("model").addEventListener("change", () => {
+  markChanged();
+  const provider = providerForModel($("model").value);
+  if (provider !== "auto") $("keyProvider").value = provider;
+});
 for (const button of document.querySelectorAll(".tabs button")) button.onclick = () => switchTab(button.dataset.tab);
 
 $("batchAdd").onclick = async () => {
@@ -287,13 +276,29 @@ $("captureProduct").onclick = async () => {
     toast("Dados da página capturados. Revise antes de gerar.");
   } catch(error) { toast(error.message,true); }
 };
+function setPlanBusy(value) {
+  operationBusy = value;
+  $("createPlan").disabled = value;
+  $("generateDraft").disabled = value;
+  $("saveProject").disabled = value;
+  $("deleteProject").disabled = value;
+  $("importAsin").disabled = value;
+  $("openProduct").disabled = value;
+  $("captureProduct").disabled = value || !productTabId;
+  $("addFact").disabled = value;
+  $("model").disabled = value;
+  $("faqCount").disabled = value;
+  $("specCount").disabled = value;
+  $("createPlan").textContent = value ? "Gerando planejamento…" : "Criar planejamento + textos A+";
+}
+
 $("createPlan").onclick = async () => {
   if (operationBusy) return;
-  operationBusy=true; $("editor").inert=true;
+  setPlanBusy(true);
   try { const project = await save(false); toast("Gerando textos A+ e depois os prompts de imagem…");
     const result = await send("projectPlan", {project}); projects = result.projects; activeId = result.activeProjectId; renderAll(); switchTab("texts"); toast("Textos A+ e prompts concluídos.");
   } catch (error) { toast(error.message, true); }
-  finally { operationBusy=false; $("editor").inert=false; await refresh(); }
+  finally { setPlanBusy(false); await refresh(); }
 };
 $("copyAllPrompts").onclick = async () => {
   const project = current(), prompt = buildFullImagePrompt(project?.plan, project?.title); if (!prompt) return toast("Crie o planejamento primeiro.", true);
@@ -310,7 +315,7 @@ $("approveProject").onclick = async () => {
   catch (error) { toast(error.message, true); switchTab("validation"); }
 };
 $("fillAmazon").onclick = async () => {
-  try { const project = await save(false); const report = await send("projectFill", {project, tabId: await sellerTabId()}); await refresh(); toast(`${report.filled} de ${report.total} campos conferidos. Revise antes de salvar na Amazon.`); }
+  try { const project = await save(false); const report = await send("projectFill", {project, tabId: await premiumEditorTabId()}); await refresh(); toast(`${report.filled} de ${report.total} campos conferidos. Revise antes de salvar na Amazon.`); }
   catch (error) { toast(error.message, true); }
 };
 $("deleteProject").onclick = async () => {
@@ -327,10 +332,10 @@ $("exportTexts").onclick = () => {
 
 async function initializePanel() {
   const label = document.querySelector(".topbar h1");
-  label.textContent = "A+ Studio · painel 1.5.0";
+  label.textContent = "A+ Studio · painel 1.5.5";
   try {
     const hello = await send("panelHello");
-    if (hello.version !== "1.5.0") throw new Error(`Painel 1.5.0 conectado à extensão ${hello.version}. Substitua os arquivos na pasta instalada e recarregue a extensão.`);
+    if (hello.version !== "1.5.5") throw new Error(`Painel 1.5.5 conectado à extensão ${hello.version}. Substitua os arquivos na pasta instalada e recarregue a extensão.`);
     label.textContent = `A+ Studio · ${hello.version} conectado`;
     await refresh();
   } catch (error) {

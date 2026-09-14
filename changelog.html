@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Novidades · A+ Studio</title>
+  <style>
+    :root{font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#14251e;background:#f7f9f8}body{max-width:720px;margin:0 auto;padding:32px 22px;line-height:1.55}main{background:#fff;border:1px solid #dce4e0;border-radius:14px;padding:24px;box-shadow:0 8px 24px rgba(20,37,30,.04)}h1{margin-top:0;color:#3d5715;border-left:7px solid #b2e146;padding-left:12px}h2{font-size:18px;margin-top:28px}li{margin:8px 0}.note{background:#f2f9df;border:1px solid #dce9be;border-radius:9px;padding:12px;color:#3d5715}
+  </style>
+</head>
+<body><main>
+  <h2>1.5.5</h2>
+  <p>Correção: o modo Automático econômico não bloqueia mais todo o editor durante o planejamento. Apenas os controles que poderiam alterar o projeto durante a geração ficam temporariamente indisponíveis; abas, navegação e demais áreas continuam responsivas.</p>
+  <h1>A+ Studio · Versão 1.5.5</h1>
+  <p><strong>Versão 1.5.5:</strong> o preenchimento passa a usar exclusivamente a URL canônica do editor A+ Premium <code>https://sellercentral.amazon.com/enhanced-content/content-manager/workflow/ebc-premium/content/new/edit</code>. O Studio reutiliza essa aba quando ela já está aberta ou abre a rota correta, valida a URL novamente no worker, restringe o conector automático à rota Premium e tolera carregamentos mais lentos.</p>
+  <p>O modo econômico escolhe entre KiraAI, Gemini, Groq e DeepSeek, preservando a validação factual antes de qualquer preenchimento.</p>
+  <ul><li>Chaves independentes para Gemini, KiraAI, Groq e DeepSeek.</li><li>Qwen 3.8 Flash e GLM 5.3 Free disponíveis pelo KiraAI.</li><li>DeepSeek Flash disponível pela API oficial e posicionado por último no automático por ser pago.</li><li>Correções regeneram somente os campos defeituosos.</li><li>Projetos aprovados são reaproveitados sem nova geração.</li></ul>
+  <p>Versão 1.5.3: corrige o preenchimento dos campos Draft.js da Amazon para atualizar o estado salvo, sem sobrepor o placeholder. Também impede que um preenchimento apenas visual seja informado como sucesso.</p>
+  <p>Correção 1.4.3: o conector do Seller Central é carregado automaticamente nas páginas autorizadas. O Studio localiza e ativa a aba da edição, aguarda seu carregamento e evita o erro ao buscar o script.</p>
+  <p>Correção 1.4.2: FAQ e especificações podem repetir dados técnicos importantes; menos de 4 especificações virou aviso, não bloqueio; o Studio procura uma aba aberta do Seller Central para preencher.</p>
+  <p>O painel usa conexão exclusiva com o serviço, verifica a versão instalada e mostra desconexões com instruções de recuperação. A causa persistente no Chrome do usuário ainda depende de confirmação local.</p>
+  <p>Corrige a comunicação do painel aberto em aba com o worker, incluindo salvar API Key e criar projetos. A autorização continua restrita ao popup e painel desta extensão.</p>
+  <p class="note">Um painel completo para produzir vários conteúdos A+ com revisão e aprovação por produto.</p>
+  <h2>Novidades desta versão</h2>
+  <ul>
+    <li>Prioridade de escrita: fidelidade, compra correta, prevenção de devoluções, conversão e somente então SEO natural.</li>
+    <li>SEO limitado ao nome correto e a 2 a 4 termos comprovados no título ou na descrição.</li>
+    <li>Roteamento automático com fallback somente entre provedores configurados.</li>
+    <li>Painel em tela cheia com cinco etapas: Produto, Textos, Imagens, Validação e Preencher.</li>
+    <li>Projetos separados por ASIN, com status e histórico local do conteúdo.</li>
+    <li>Fila para gerar rascunhos de até 50 produtos, sem aprovação ou publicação automática.</li>
+    <li>Ficha factual com confirmação e origem das informações.</li>
+    <li>Editor com contador, regeneração de um campo e indicação de origem provável.</li>
+    <li>Aprovação individual obrigatória antes do preenchimento da Amazon.</li>
+    <li>Altura, largura, profundidade e comprimento são reunidos em uma única especificação “Dimensões”.</li>
+    <li>Medidas complementares, como comprimento das alças, permanecem no mesmo campo.</li>
+    <li>Medidas são removidas de outros campos, como “Design”, para não aparecerem duas vezes.</li>
+    <li>Dados técnicos importantes podem aparecer na FAQ e nas especificações quando isso ajuda a compra correta.</li>
+    <li>Botão “Copiar prompt completo” reúne as oito imagens em um único texto.</li>
+    <li>FAQ criada do zero para o produto informado, sem perguntas de exemplos de outras categorias.</li>
+    <li>Quando há poucos dados, permite perguntas gerais que ainda sejam relevantes e factuais.</li>
+    <li>Especificações ausentes ficam vazias; marcadores como “Não especificado” e “N/A” são removidos localmente.</li>
+  </ul>
+  <h2>Planejamento e qualidade</h2>
+  <ul>
+    <li>Diagnóstico factual do produto e indicação explícita de inferências.</li>
+    <li>Lista de informações ausentes que podem melhorar o A+.</li>
+    <li>Mapeamento de características para benefícios com a evidência usada.</li>
+    <li>Oito briefings e prompts de imagem nos tamanhos dos módulos.</li>
+    <li>Nota local de 0 a 100 para os textos gerados.</li>
+    <li>Exportação do planejamento em TXT.</li>
+  </ul>
+  <h2>Também incluído</h2>
+  <p>Geração por KiraAI, Gemini, Groq ou DeepSeek, preenchimento, mapeamento manual, reutilização de textos, desfazer, diagnóstico técnico e auditoria de até 250 ASINs continuam disponíveis.</p>
+  <p>A nota é uma ajuda de revisão e não representa aprovação, elegibilidade ou publicação pela Amazon.</p>
+</main></body>
+</html>

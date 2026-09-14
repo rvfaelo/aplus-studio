@@ -563,7 +563,14 @@ $("openChangelog").onclick = event => {
   chrome.tabs.create({url: chrome.runtime.getURL("changelog.html")});
 };
 
-$("model").addEventListener("change", () => { $("customModel").hidden = $("model").value !== "custom"; if (!$("customModel").hidden) $("customModel").focus(); else if(selectedModel()!=="auto/economico"){ $("keyProvider").value=selectedProvider();selectProviderState();} });
+$("model").addEventListener("change", () => {
+  $("customModel").hidden = $("model").value !== "custom";
+  if (!$("customModel").hidden) $("customModel").focus();
+  else {
+    if (selectedModel() !== "auto/economico") $("keyProvider").value = selectedProvider();
+    selectProviderState();
+  }
+});
 $("keyProvider").addEventListener("change",selectProviderState);
 async function persistDraft() {
   if (!initialized) return;
@@ -579,7 +586,7 @@ async function persistDraft() {
     throw error;
   }
 }
-for (const id of ["title", "description", "model", "customModel", "faqCount", "specCount"]) {
+for (const id of ["title", "description", "customModel", "faqCount", "specCount"]) {
   $(id).addEventListener("input", () => { void persistDraft().catch(() => {}); });
 }
 for (const id of ["model", "faqCount", "specCount"]) $(id).addEventListener("change", () => { void persistDraft().catch(() => {}); });

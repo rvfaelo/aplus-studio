@@ -1,6 +1,13 @@
 // Regras compartilhadas pelo popup, pelo worker e pelos testes. Sem dependências.
 export const DEFAULTS = Object.freeze({model: "auto/economico", faqCount: 5, specCount: 6});
 
+export const PREMIUM_EDITOR_URL = "https://sellercentral.amazon.com/enhanced-content/content-manager/workflow/ebc-premium/content/new/edit";
+
+export function isPremiumEditorURL(value) {
+  try { return new URL(value || "").href === PREMIUM_EDITOR_URL; }
+  catch { return false; }
+}
+
 export function settings(input = {}) {
   const integer = (value, fallback, max) => Number.isInteger(Number(value)) &&
     Number(value) >= 1 && Number(value) <= max ? Number(value) : fallback;
