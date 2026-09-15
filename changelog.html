@@ -9,13 +9,13 @@
   </style>
 </head>
 <body><main>
-  <h2>1.5.5</h2>
-  <p>Correção: o modo Automático econômico não bloqueia mais todo o editor durante o planejamento. Apenas os controles que poderiam alterar o projeto durante a geração ficam temporariamente indisponíveis; abas, navegação e demais áreas continuam responsivas.</p>
-  <h1>A+ Studio · Versão 1.5.5</h1>
-  <p><strong>Versão 1.5.5:</strong> o preenchimento passa a usar exclusivamente a URL canônica do editor A+ Premium <code>https://sellercentral.amazon.com/enhanced-content/content-manager/workflow/ebc-premium/content/new/edit</code>. O Studio reutiliza essa aba quando ela já está aberta ou abre a rota correta, valida a URL novamente no worker, restringe o conector automático à rota Premium e tolera carregamentos mais lentos.</p>
+  <h1>A+ Studio · Versão 1.5.3</h1>
   <p>O modo econômico escolhe entre KiraAI, Gemini, Groq e DeepSeek, preservando a validação factual antes de qualquer preenchimento.</p>
   <ul><li>Chaves independentes para Gemini, KiraAI, Groq e DeepSeek.</li><li>Qwen 3.8 Flash e GLM 5.3 Free disponíveis pelo KiraAI.</li><li>DeepSeek Flash disponível pela API oficial e posicionado por último no automático por ser pago.</li><li>Correções regeneram somente os campos defeituosos.</li><li>Projetos aprovados são reaproveitados sem nova geração.</li></ul>
-  <p>Versão 1.5.3: corrige o preenchimento dos campos Draft.js da Amazon para atualizar o estado salvo, sem sobrepor o placeholder. Também impede que um preenchimento apenas visual seja informado como sucesso.</p>
+  <p>Versão 1.5.3: corrige falsos positivos da revisão de repetição e adiciona “Corrigir repetições com IA”. A análise deixa de comparar headline com corpo, ignora especificações e FAQ, desconta as palavras do nome do produto e usa uma porcentagem equilibrada. A correção reescreve somente os campos realmente repetidos.</p>
+  <p>Versão 1.5.2: mapeamento manual contínuo com avanço automático, dimensões com cada número rotulado, SKU ao lado do ASIN no CSV e revisão automática com campo, trecho, semelhança e ação recomendada. Também corrige falsos alertas em medidas compactas como 10x20x30.</p>
+  <p>Versão 1.5.1: novo diagnóstico completo da conexão com o editor A+ Premium, seleção exclusiva de abas de edição A+ e recuperação versionada do conector em páginas abertas antes da atualização.</p>
+  <p>Versão 1.5.0: nova interface do painel e do popup, com cor principal #B2E146, hierarquia visual mais clara, ficha factual em tabela e melhor organização das cinco etapas.</p>
   <p>Correção 1.4.3: o conector do Seller Central é carregado automaticamente nas páginas autorizadas. O Studio localiza e ativa a aba da edição, aguarda seu carregamento e evita o erro ao buscar o script.</p>
   <p>Correção 1.4.2: FAQ e especificações podem repetir dados técnicos importantes; menos de 4 especificações virou aviso, não bloqueio; o Studio procura uma aba aberta do Seller Central para preencher.</p>
   <p>O painel usa conexão exclusiva com o serviço, verifica a versão instalada e mostra desconexões com instruções de recuperação. A causa persistente no Chrome do usuário ainda depende de confirmação local.</p>

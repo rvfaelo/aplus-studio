@@ -1,14 +1,12 @@
 {
   "name": "aplus-studio-planejamento-local",
   "private": true,
-  "version": "1.5.5",
+  "version": "1.5.3",
   "type": "module",
   "description": "Extensão sem dependências em produção. Node é usado apenas nos testes.",
   "scripts": {
-    "test": "node --test tests/amazon-dom.test.mjs tests/page-writer.test.mjs tests/providers.test.mjs tests/planning.test.mjs tests/projects.test.mjs tests/dashboard.test.mjs tests/projects-worker.test.mjs tests/planning-worker.test.mjs tests/catalog-audit.test.mjs tests/audit-worker.test.mjs tests/editor-url.test.mjs",
+    "test": "node --test tests/providers.test.mjs tests/planning.test.mjs tests/projects.test.mjs tests/dashboard.test.mjs tests/projects-worker.test.mjs tests/planning-worker.test.mjs tests/catalog-audit.test.mjs tests/audit-worker.test.mjs",
     "test:browser": "node --test tests/browser.test.mjs"
   },
-  "devDependencies": {
-    "playwright": "^1.58.0"
-  }
+  "devDependencies": {"playwright": "^1.58.0"}
 }

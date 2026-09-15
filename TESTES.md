@@ -1,10 +1,10 @@
 # Verificação da entrega
 
-Data: 13/09/2026. Versão: 1.1.4.
+Data: 15/09/2026. Versão: 1.5.3.
 
 ## Testes executados
 
-O comando `npm test` executa 32 testes focados:
+O comando `npm test` executa 48 testes focados:
 
 - normalização e validação do planejamento;
 - exigência de oito briefings e tamanhos corretos;
@@ -20,6 +20,13 @@ O comando `npm test` executa 32 testes focados:
 - distinção de bloqueio, indisponibilidade e erro;
 - classificação de estados do Gerenciador A+;
 - captura, consulta simulada e progresso da auditoria no worker.
+- captura e preservação de SKU no catálogo, com a coluna imediatamente depois do ASIN no CSV;
+- mapeamento manual contínuo, sem clique de ativação entre os campos;
+- dimensões com rótulos por extenso e reconhecimento de valores compactos como `10x20x30`;
+- revisão detalhada de números sem apoio e pares de textos repetidos;
+- exclusão de headline x corpo, ficha técnica, FAQ e nome do produto do cálculo indevido de repetição;
+- cálculo equilibrado que não marca um texto curto contido em outro como 100%;
+- correção seletiva com IA, preservando todos os campos não sinalizados;
 - criação e normalização de projetos por ASIN;
 - envio à IA apenas de fatos confirmados;
 - leitura da fila em massa no formato `ASIN; título; descrição`;
@@ -30,13 +37,16 @@ O comando `npm test` executa 32 testes focados:
 - permissão para localizar e ativar uma aba da Amazon aberta;
 - correspondência entre os IDs do painel e o JavaScript;
 - separação entre geração, aprovação e preenchimento.
+- botão de diagnóstico, relatório copiável e correspondência dos novos controles com o JavaScript;
+- seleção exclusiva de uma URL real do editor A+ Premium, sem escolher outras páginas do Seller Central;
+- conexão versionada entre o worker e a aba, com diagnóstico de módulos, campos, login, captcha e erros de reprodução;
 - geração simulada de vários projetos no worker, sem aprovação nem preenchimento automático.
 
 Regressão 1.1.1: o teste do painel inclui sender.tab, como no Chrome. Antes da correção, criar projetos e salvar chave expiravam sem resposta; após a correção passam. Testes adicionais verificam que popup continua autorizado e páginas externas/content scripts/outras extensões continuam bloqueados.
 
 1.1.2: testes do cliente e worker reais conectados por portas simuladas, incluindo handshake de versão, chave, projetos, chamadas concorrentes, desconexão e rejeição de origens externas.
 
-Resultado: **32 aprovados, 0 falhas**. Acrescentados testes de máscara da chave, geração de textos e oito briefings juntos e validação da URL/ASIN com interrupção diante de captcha. Testes com mensagens e DOM simulados; não foi feita validação em navegador real ou conta autenticada nesta correção.
+Resultado: **48 aprovados, 0 falhas**. Incluídos testes de mapeamento, medidas, SKU no CSV, revisão e correção seletiva, diagnóstico detalhado, máscara da chave, geração de textos e oito briefings juntos e validação da URL/ASIN com interrupção diante de captcha. Os testes focados usam mensagens e DOM simulados; não foi feita validação em conta autenticada nesta correção.
 
 Também passaram a verificação de sintaxe de `planning.js`, `openai.js`, `background.js` e `popup.js`, a leitura do `manifest.json` e a conferência de que todos os IDs usados por `popup.js` existem em `popup.html`.
 
@@ -53,5 +63,3 @@ Também passaram a verificação de sintaxe de `planning.js`, `openai.js`, `back
 - A chave não é enviada às páginas da Amazon.
 - O planejamento e a geração enviam apenas os dados do produto fornecidos pelo usuário à Groq.
 - A nota de qualidade é calculada localmente e não consome créditos.
-
-- Regressão 1.5.5: o preenchimento aceita somente a URL canônica do editor A+ Premium e não seleciona outras páginas do Seller Central.

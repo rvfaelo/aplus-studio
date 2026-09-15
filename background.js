@@ -1,4 +1,4 @@
-import {DEFAULTS, settings, isSellerURL, makeSlots, PREMIUM_EDITOR_URL, isPremiumEditorURL} from "./shared.js";
+import {DEFAULTS, settings, isSellerURL, isAplusEditorURL, safeSellerURL, makeSlots} from "./shared.js";
 import {generateTexts} from "./openai.js";
 import {writeAmazonField} from "./page-writer.js";
 import {normalizeAsins, inspectProductHTML, scanSellerCatalogPage} from "./catalog-audit.js";
@@ -25,6 +25,8 @@ let draftQueue = Promise.resolve();
 const activeStates = new Set(["scanning", "generating", "filling"]);
 const auditActiveStates = new Set(["queued", "checking"]);
 const planningActiveStates = new Set(["planning"]);
+const EXTENSION_VERSION = chrome.runtime.getManifest?.().version || "1.5.3";
+const PAGE_CHANNEL = `aplus-page-v${EXTENSION_VERSION}`;
 
 async function providerKeys(model) {
   const saved=await chrome.storage.local.get(["apiKeys","apiKey"]), keys={...(saved.apiKeys||{})};
@@ -96,6 +98,32 @@ async function generateProjectDraft(project, signal, onStage = () => {}) {
   next.quality = scoreAplus({slots, texts: next.texts, title: next.title, description});
   next.approved = false; next.status = "review"; next.error = ""; next.updatedAt = Date.now();
   return next;
+}
+
+function repetitionRevisionPrompt(project, slots, targetKeys, quality) {
+  const targets = new Set(targetKeys);
+  const pairs = (quality.repetitions || []).filter(item => targets.has(item.rightKey))
+    .map(item => `- ${item.leftLabel} x ${item.rightLabel}: ${item.score}% de semelhança.`).join("\n");
+  const previous = slots.filter(slot => targets.has(slot.key)).map(slot =>
+    `${slot.label}: ${String(project.texts?.[slot.key] || "").slice(0, 800)}`).join("\n");
+  const protectedTexts = slots.filter(slot => !targets.has(slot.key) && ["headline", "body"].includes(slot.role) && project.texts?.[slot.key])
+    .map(slot => `${slot.label}: ${String(project.texts[slot.key]).slice(0, 800)}`).join("\n");
+  return `CORREÇÃO SELETIVA DE REPETIÇÕES
+Reescreva somente as chaves solicitadas no schema. Os demais campos serão preservados.
+Cada novo texto deve ter um ângulo, benefício ou uso diferente dos textos protegidos e também dos outros campos reescritos.
+Não repita o nome completo do produto apenas para preencher espaço. Use o nome quando necessário e varie a construção naturalmente.
+Mantenha somente fatos presentes no título, descrição ou ficha factual. Não invente materiais, medidas, usos, compatibilidades ou promessas.
+
+PARES CONFIRMADOS PELO REVISOR:
+${pairs || "- Repetição lexical entre campos equivalentes."}
+
+TEXTOS QUE SERÃO SUBSTITUÍDOS:
+${previous}
+
+TEXTOS PROTEGIDOS, QUE NÃO PODEM SER COPIADOS OU ALTERADOS:
+${protectedTexts}
+
+Retorne somente o JSON exigido, com todos os campos solicitados no schema.`;
 }
 
 async function startProjectQueue(ids) {
@@ -199,7 +227,7 @@ function mergeAuditItems(oldItems, incoming) {
   for (const item of incoming) {
     if (!/^B[0-9A-Z]{9}$/.test(item.asin)) continue;
     const old = map.get(item.asin) || {};
-    map.set(item.asin, {...old, ...item, title: item.title || old.title || "",
+    map.set(item.asin, {...old, ...item, sku: item.sku || old.sku || "", title: item.title || old.title || "",
       sellerStatus: item.sellerStatus === "unknown" ? old.sellerStatus || "unknown" : item.sellerStatus || old.sellerStatus || "unknown"});
   }
   return [...map.values()].slice(0, 250);
@@ -209,7 +237,7 @@ async function saveAuditList(text) {
   const asins = normalizeAsins(text);
   const saved = await chrome.storage.local.get("auditItems");
   const old = new Map((saved.auditItems || []).map(item => [item.asin, item]));
-  const auditItems = asins.map(asin => old.get(asin) || {asin, title: "", sellerStatus: "unknown", status: "queued"});
+  const auditItems = asins.map(asin => old.get(asin) || {asin, sku: "", title: "", sellerStatus: "unknown", status: "queued"});
   await chrome.storage.local.set({auditItems});
   return {items: auditItems};
 }
@@ -278,7 +306,7 @@ async function startAudit(message) {
   if (!asins.length) throw new Error("Cole pelo menos um ASIN ou capture os produtos da página.");
   const saved = await chrome.storage.local.get("auditItems");
   const old = new Map((saved.auditItems || []).map(item => [item.asin, item]));
-  const items = asins.map(asin => old.get(asin) || {asin, title: "", sellerStatus: "unknown"});
+  const items = asins.map(asin => old.get(asin) || {asin, sku: "", title: "", sellerStatus: "unknown"});
   const task = {id: crypto.randomUUID(), controller: new AbortController()};
   auditActive = task;
   await chrome.storage.session.set({auditJob: {id: task.id, status: "queued", total: items.length, completed: 0,
@@ -318,45 +346,56 @@ function state(patch) {
 
 async function tabById(id, expectedURL) {
   let tab;
-  try { tab = await chrome.tabs.get(id); } catch { throw new Error(`A aba foi fechada. Abra o editor A+ Premium: ${PREMIUM_EDITOR_URL}`); }
-  if (!isPremiumEditorURL(tab.url)) {
-    const redirected = isSellerURL(tab.url) ? "A Amazon redirecionou a aba para outra página do Seller Central. " : "";
-    throw new Error(`${redirected}O preenchimento funciona exclusivamente no editor A+ Premium: ${PREMIUM_EDITOR_URL}`);
-  }
+  try { tab = await chrome.tabs.get(id); } catch { throw new Error("A aba foi fechada. Abra a edição do A+ no Seller Central."); }
+  if (!isSellerURL(tab.url)) throw new Error("Abra uma página de edição do A+ no Amazon Seller Central e clique na extensão.");
   if (expectedURL && tab.url !== expectedURL) throw new Error("A aba mudou de página. Gere novamente na edição correta.");
   return tab;
 }
 
-async function connect(tabId) {
-  const expectedBridgeVersion = "1.5.5";
+function diagnosticStep(trace, id, label, status, detail) {
+  trace?.push({id, label, status, detail: String(detail || "").slice(0, 1200)});
+}
+
+async function connect(tabId, trace = null) {
   let tab = await tabById(tabId);
+  let waitedForLoad = false;
   if (tab.status === "loading") {
-    for (let attempt = 0; attempt < 80 && tab.status === "loading"; attempt++) {
+    waitedForLoad = true;
+    for (let attempt = 0; attempt < 20 && tab.status === "loading"; attempt++) {
       await new Promise(resolve => setTimeout(resolve, 250));
       tab = await tabById(tabId);
     }
   }
-  if (tab.status === "loading") throw new Error("A edição do A+ ainda está carregando. Aguarde a página terminar e clique em preencher novamente.");
+  if (tab.status === "loading") {
+    diagnosticStep(trace, "page_load", "Carregamento da aba", "error", "A Amazon não terminou de carregar em 5 segundos.");
+    throw new Error("A edição do A+ ainda está carregando. Aguarde a página terminar e clique em preencher novamente.");
+  }
+  diagnosticStep(trace, "page_load", "Carregamento da aba", "ok", waitedForLoad ? "A aba terminou de carregar durante o diagnóstico." : "Documento principal carregado.");
 
   // Nas páginas abertas depois da instalação, o manifesto já carrega estes scripts.
   // A injeção abaixo recupera apenas abas que estavam abertas antes da atualização.
-  let pong = null;
-  try { pong = await chrome.tabs.sendMessage(tabId, {channel: "aplus-page", action: "ping"}); }
-  catch { /* A aba pode ser anterior à instalação. */ }
-  if (pong?.ok && pong.data?.ready) {
-    if (pong.data.bridgeVersion !== expectedBridgeVersion)
-      throw new Error("A aba da Amazon ainda está usando a versão anterior da extensão. Recarregue essa aba uma vez e clique em preencher novamente.");
-    const marker = await chrome.scripting.executeScript({target: {tabId}, world: "ISOLATED", func: () => location.href});
-    return {tabId, url: tab.url, documentId: marker[0]?.documentId};
-  }
+  try {
+    const pong = await chrome.tabs.sendMessage(tabId, {channel: PAGE_CHANNEL, action: "ping"});
+    if (pong?.ok && pong.data?.ready && pong.data.version === EXTENSION_VERSION) {
+      const marker = await chrome.scripting.executeScript({target: {tabId}, world: "ISOLATED", func: () => location.href});
+      diagnosticStep(trace, "connector", "Conector da extensão", "ok", `Conector ${pong.data.version} respondeu na aba.`);
+      return {tabId, url: tab.url, documentId: marker[0]?.documentId};
+    }
+  } catch { /* A aba pode ser anterior à instalação ou à atualização. */ }
 
   try {
     const injected = await chrome.scripting.executeScript({target: {tabId}, world: "ISOLATED", files: ["content-engine.js", "content.js"]});
     const documentId = injected[0]?.documentId;
     if (!documentId) throw new Error("Documento não identificado.");
+    const pong = await chrome.tabs.sendMessage(tabId, {channel: PAGE_CHANNEL, action: "ping"}, {documentId});
+    if (!pong?.ok || !pong.data?.ready || pong.data.version !== EXTENSION_VERSION) {
+      throw new Error("O conector injetado não confirmou a versão atual.");
+    }
+    diagnosticStep(trace, "connector_recovery", "Recuperação do conector", "ok", `Conector ${pong.data.version} carregado sem recarregar a página.`);
     return {tabId, url: tab.url, documentId};
   } catch (error) {
     const detail = String(error?.message || "");
+    diagnosticStep(trace, "connector_recovery", "Recuperação do conector", "error", detail || "O Chrome recusou a injeção do conector.");
     if (/fetching the script|could not load|cannot access|missing host permission/i.test(detail)) {
       throw new Error("A aba da Amazon foi aberta antes desta versão da extensão. Recarregue a edição A+ uma vez, aguarde terminar e clique em preencher novamente.");
     }
@@ -368,10 +407,125 @@ async function page(target, action, data = {}) {
   await tabById(target.tabId, target.url);
   let response;
   try {
-    response = await chrome.tabs.sendMessage(target.tabId, {channel: "aplus-page", action, ...data}, {documentId: target.documentId});
+    response = await chrome.tabs.sendMessage(target.tabId, {channel: PAGE_CHANNEL, action, ...data}, {documentId: target.documentId});
   } catch { throw new Error("A edição foi recarregada ou está inacessível. Abra a extensão novamente."); }
   if (!response?.ok) throw new Error(response?.error || "A página não respondeu.");
   return response.data;
+}
+
+function finishFillDiagnostic(report) {
+  const hasError = report.checks.some(check => check.status === "error");
+  const hasWarning = report.checks.some(check => check.status === "warning");
+  report.status = hasError ? "error" : hasWarning ? "warning" : "ok";
+  const priority = ["seller_tabs", "editor_tab", "editor_url", "connector_failure", "connector_recovery", "page_diagnostic",
+    "amazon_access", "module_render", "fields", "modules", "async_loading", "content", "approval", "project"];
+  const preferred = status => priority.map(id => report.checks.find(check => check.id === id && check.status === status)).find(Boolean)
+    || report.checks.find(check => check.status === status);
+  const failed = preferred("error");
+  const warning = preferred("warning");
+  report.summary = hasError ? "O preenchimento está bloqueado." : hasWarning ? "A conexão funciona, mas há pontos para revisar." : "A aba está pronta para o preenchimento.";
+  report.recommendation = failed?.detail || warning?.detail || "Volte ao Studio e use Preencher aba da Amazon aberta.";
+  return report;
+}
+
+async function diagnoseProjectFill(message) {
+  const project = createProject(message.project || {});
+  const cfg = settings(project.config);
+  const slots = project.slots?.length ? project.slots : makeSlots(cfg);
+  const checks = [];
+  const report = {
+    version: EXTENSION_VERSION,
+    generatedAt: new Date().toISOString(),
+    status: "error",
+    summary: "Diagnóstico incompleto.",
+    recommendation: "Execute novamente.",
+    checks,
+    metrics: {sellerTabs: 0, editorTabs: 0, expectedFields: slots.length, foundFields: 0, candidates: 0, moduleCounts: {}},
+    target: null,
+    warnings: []
+  };
+
+  const filledTexts = slots.filter(slot => String(project.texts?.[slot.key] || "").trim()).length;
+  diagnosticStep(checks, "project", "Projeto selecionado", project.id ? "ok" : "error",
+    project.id ? `${project.asin || "Sem ASIN"} · ${filledTexts} de ${slots.length} textos com conteúdo.` : "Nenhum projeto foi selecionado no Studio.");
+  diagnosticStep(checks, "approval", "Aprovação do projeto", project.approved && project.status === "approved" ? "ok" : "warning",
+    project.approved && project.status === "approved" ? "Projeto aprovado para preenchimento." : "O diagnóstico pode continuar, mas é necessário aprovar o projeto antes de preencher.");
+  diagnosticStep(checks, "content", "Textos disponíveis", filledTexts ? "ok" : "error",
+    filledTexts ? `${filledTexts} campo(s) possuem texto salvo.` : "Gere ou informe os textos A+ antes do preenchimento.");
+
+  const ids = [...new Set((Array.isArray(message.tabIds) ? message.tabIds : []).filter(Number.isSafeInteger))].slice(0, 30);
+  const tabs = [];
+  for (const id of ids) {
+    try {
+      const tab = await chrome.tabs.get(id);
+      if (isSellerURL(tab.url)) tabs.push(tab);
+    } catch { /* Aba fechada entre a consulta do painel e o diagnóstico. */ }
+  }
+  const editors = tabs.filter(tab => isAplusEditorURL(tab.url));
+  report.metrics.sellerTabs = tabs.length;
+  report.metrics.editorTabs = editors.length;
+  diagnosticStep(checks, "seller_tabs", "Abas do Seller Central", tabs.length ? "ok" : "error",
+    tabs.length ? `${tabs.length} aba(s) autorizada(s) encontrada(s) nesta janela.` : "Nenhuma aba do Seller Central foi encontrada nesta janela.");
+  diagnosticStep(checks, "editor_tab", "Aba de edição A+ Premium", editors.length ? "ok" : "error",
+    editors.length ? `${editors.length} editor(es) A+ Premium encontrado(s).` : "Há aba da Amazon, mas nenhuma está na página de edição A+ Premium. Abra o conteúdo do produto no editor A+ Premium e tente novamente.");
+  if (!editors.length) return finishFillDiagnostic(report);
+  if (editors.length > 1)
+    diagnosticStep(checks, "multiple_editors", "Mais de um editor aberto", "warning", "O Studio usará o editor acessado mais recentemente. Para eliminar dúvida sobre o produto, deixe aberta somente a edição que deseja preencher.");
+
+  editors.sort((a, b) => Number(b.lastAccessed || 0) - Number(a.lastAccessed || 0));
+  const tab = editors[0];
+  report.target = {tabId: tab.id, url: safeSellerURL(tab.url), status: tab.status || "desconhecido"};
+  diagnosticStep(checks, "editor_url", "URL do editor", "ok", safeSellerURL(tab.url));
+
+  const connectionTrace = [];
+  let target;
+  try {
+    target = await connect(tab.id, connectionTrace);
+    checks.push(...connectionTrace);
+  } catch (error) {
+    checks.push(...connectionTrace);
+    if (!connectionTrace.some(check => check.status === "error"))
+      diagnosticStep(checks, "connector_failure", "Conexão com a aba", "error", error.message);
+    return finishFillDiagnostic(report);
+  }
+
+  let pageReport;
+  try {
+    pageReport = await page(target, "diagnose", {slots});
+  } catch (error) {
+    diagnosticStep(checks, "page_diagnostic", "Leitura do editor", "error", error.message);
+    return finishFillDiagnostic(report);
+  }
+  report.metrics.expectedFields = pageReport.expectedFields;
+  report.metrics.foundFields = pageReport.foundFields;
+  report.metrics.candidates = pageReport.candidates;
+  report.metrics.moduleCounts = pageReport.moduleCounts || {};
+  report.warnings = Array.isArray(pageReport.warnings) ? pageReport.warnings.slice(0, 30) : [];
+
+  diagnosticStep(checks, "page_version", "Versão na página", pageReport.version === report.version ? "ok" : "error",
+    pageReport.version === report.version ? `Conector ${pageReport.version} confirmado.` : `A página respondeu com ${pageReport.version || "versão desconhecida"}; a extensão instalada é ${report.version}.`);
+  diagnosticStep(checks, "amazon_access", "Login e verificação da Amazon", pageReport.loginRequired || pageReport.verificationRequired ? "error" : "ok",
+    pageReport.loginRequired ? "A página está pedindo login. Entre na conta e execute o diagnóstico novamente." : pageReport.verificationRequired ? "A Amazon está pedindo verificação temporária ou captcha. Resolva-a na aba e execute novamente." : "Nenhum bloqueio de login, captcha ou código foi detectado.");
+  diagnosticStep(checks, "module_render", "Renderização dos módulos", pageReport.renderErrors ? "error" : "ok",
+    pageReport.renderErrors ? `A própria Amazon mostra ${pageReport.renderErrors} erro(s) de reprodução de módulo. Recarregue o editor e confirme que os módulos aparecem antes de preencher.` : "Nenhum erro de reprodução de módulo foi detectado.");
+
+  const counts = pageReport.moduleCounts || {};
+  const missing = [];
+  if (counts.full !== 2) missing.push(`imagem completa: ${counts.full || 0}/2`);
+  for (const [key, label] of [["four", "quatro imagens"], ["two", "duas imagens"], ["faq", "FAQ"], ["specs", "especificações"]])
+    if (counts[key] !== 1) missing.push(`${label}: ${counts[key] || 0}/1`);
+  diagnosticStep(checks, "modules", "Estrutura dos módulos", missing.length ? "warning" : "ok",
+    missing.length ? `Estrutura esperada ainda não está completa (${missing.join("; ")}). Adicione ou expanda os módulos que pretende preencher.` : "Os seis módulos esperados foram encontrados.");
+  diagnosticStep(checks, "fields", "Campos reconhecidos", pageReport.foundFields === pageReport.expectedFields ? "ok" : pageReport.foundFields ? "warning" : "error",
+    pageReport.foundFields === pageReport.expectedFields ? `${pageReport.foundFields} de ${pageReport.expectedFields} campos reconhecidos.` :
+      pageReport.foundFields ? `${pageReport.foundFields} de ${pageReport.expectedFields} campos reconhecidos. Expanda os módulos; se persistir, use Mapear campos.` : "Nenhum campo A+ foi reconhecido. Aguarde o editor terminar, expanda os módulos e confira se a Amazon os renderizou.");
+  if (pageReport.blockedFrames)
+    diagnosticStep(checks, "frames", "Conteúdo incorporado", "warning", `${pageReport.blockedFrames} iframe(s) de outra origem não puderam ser lidos.`);
+  if (pageReport.loadingIndicators)
+    diagnosticStep(checks, "async_loading", "Componentes carregando", "warning", `${pageReport.loadingIndicators} indicador(es) de carregamento ainda estavam ativos.`);
+  for (const [index, warning] of report.warnings.entries())
+    diagnosticStep(checks, `scan_warning_${index + 1}`, "Aviso do mapeamento", "warning", warning);
+  return finishFillDiagnostic(report);
 }
 
 async function inspect(target, cfg) {
@@ -451,7 +605,7 @@ async function exclusive(callback) {
 async function handle(message) {
   await ready;
   switch (message.action) {
-    case "panelHello": return {version: chrome.runtime.getManifest().version};
+    case "panelHello": return {version: EXTENSION_VERSION};
     case "status": {
       await draftQueue;
       const [temporary, persistent, synced] = await Promise.all([
@@ -664,17 +818,49 @@ async function handle(message) {
         return upsertProject(project);
       } finally { if (projectActive === task) projectActive = null; }
     }
+    case "projectFixRepetitions": {
+      if (projectActive || active || planningActive) throw new Error("Aguarde a operação atual terminar.");
+      const project = createProject(message.project || {});
+      const slots = project.slots?.length ? project.slots : makeSlots(project.config);
+      const description = factualDescription(project);
+      const before = scoreAplus({slots, texts: project.texts, title: project.title, description});
+      const targetKeys = (before.repetitionTargets || []).filter(key => slots.some(slot => slot.key === key));
+      if (!targetKeys.length) {
+        const checked = validateProject(project);
+        project.texts = checked.texts; project.notes = checked.notes; project.validationWarnings = checked.warnings;
+        project.quality = before; project.updatedAt = Date.now();
+        const saved = await upsertProject(project);
+        return {...saved, corrected: 0, before: 0, remaining: 0, score: before.score};
+      }
+      const selectedSlots = slots.filter(slot => targetKeys.includes(slot.key));
+      const task = {controller: new AbortController()}; projectActive = task;
+      try {
+        const generated = await routed(settings(project.config).model, "texts", () => {}, (apiKey, model, onStage) => generateTexts({
+          apiKey, title: project.title, description, model, slots: selectedSlots, signal: task.controller.signal, onStage,
+          revisionPrompt: repetitionRevisionPrompt(project, slots, targetKeys, before)
+        }));
+        project.texts = {...project.texts, ...generated.texts};
+        project.notes = [...project.notes, ...generated.notes].slice(-30);
+        const checked = validateProject(project);
+        project.texts = checked.texts; project.notes = checked.notes; project.validationWarnings = checked.warnings;
+        project.quality = scoreAplus({slots, texts: project.texts, title: project.title, description});
+        project.approved = false; project.status = "review"; project.updatedAt = Date.now();
+        const saved = await upsertProject(project);
+        return {...saved, corrected: targetKeys.length, before: before.repetitions.length,
+          remaining: project.quality.repetitions.length, score: project.quality.score};
+      } finally { if (projectActive === task) projectActive = null; }
+    }
+    case "projectDiagnostic": return diagnoseProjectFill(message);
     case "projectFill": return exclusive(async task => {
       const project = createProject(message.project || {});
       if (!project.approved || project.status !== "approved") throw new Error("Aprove o projeto antes de preencher a Amazon.");
+      const tab = await tabById(message.tabId);
+      if (!isAplusEditorURL(tab.url)) throw new Error("A aba selecionada não é o editor A+ Premium. Execute o diagnóstico para localizar a página correta.");
       const target = await connect(message.tabId); task.target = target;
       const inspected = await inspect(target, settings(project.config));
-      const found = inspected.scan.entries.filter(entry => entry.found).length;
-      if (!found) throw new Error("Nenhum campo A+ foi identificado nesta aba. Confirme que esta é a edição correta e mantenha os módulos expandidos.");
       const scan = await page(target, "scan", {slots: inspected.slots});
       const texts = Object.fromEntries(inspected.slots.map(slot => [slot.key, String(project.texts[slot.key] || "")]));
       const report = await page(target, "fill", {scanId: scan.scanId, slots: inspected.slots, texts});
-      if (!report.filled) throw new Error("A Amazon não confirmou nenhum campo preenchido. O texto não foi deixado apenas sobre o placeholder. Recarregue a edição A+ e tente novamente.");
       project.status = "filled"; project.updatedAt = Date.now(); project.approved = true;
       await upsertProject(project);
       return report;
@@ -705,7 +891,7 @@ chrome.runtime.onMessage.addListener((message, sender, reply) => {
     const target = active?.target;
     if (sender.id !== chrome.runtime.id || !sender.tab || !target || active.controller.signal.aborted ||
       sender.tab.id !== target.tabId || sender.documentId !== target.documentId ||
-      sender.url !== target.url || message.href !== target.url || !isPremiumEditorURL(sender.url) ||
+      sender.url !== target.url || message.href !== target.url || !isSellerURL(sender.url) ||
       !/^[a-f0-9-]{36}$/.test(message.marker) || typeof message.value !== "string" ||
       message.value.length > 20000 || typeof message.expectedBefore !== "string") {
       reply({ok: false, error: "Escrita fora da operação ou do documento ativo."}); return;

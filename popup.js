@@ -200,7 +200,7 @@ function renderAudit(items = auditItems) {
   for (const item of visible) {
     const row = document.createElement("div"); row.className = "audit-row";
     const top = document.createElement("div"); top.className = "audit-row-top";
-    const asin = document.createElement("strong"); asin.textContent = item.asin;
+    const asin = document.createElement("strong"); asin.textContent = item.sku ? `${item.asin} · SKU ${item.sku}` : item.asin;
     const badge = document.createElement("span"); badge.className = `audit-result ${item.status || item.sellerStatus || "unknown"}`; badge.textContent = auditLabel(item);
     top.append(asin, badge); row.append(top);
     if (item.title) { const title = document.createElement("p"); title.className = "audit-title"; title.textContent = item.title; row.append(title); }
@@ -488,8 +488,8 @@ $("auditFilter").addEventListener("change", () => renderAudit());
 $("auditExport").onclick = () => {
   if (!auditItems.length) return;
   const cell = value => `"${String(value ?? "").replaceAll('"', '""')}"`;
-  const lines = [["ASIN", "Produto", "Situação", "Detalhes", "Link"], ...auditItems.map(item =>
-    [item.asin, item.title || "", auditLabel(item), item.detail || "", item.publicUrl || `https://www.amazon.com.br/dp/${item.asin}`])]
+  const lines = [["ASIN", "SKU", "Produto", "Situação", "Detalhes", "Link"], ...auditItems.map(item =>
+    [item.asin, item.sku || "", item.title || "", auditLabel(item), item.detail || "", item.publicUrl || `https://www.amazon.com.br/dp/${item.asin}`])]
     .map(row => row.map(cell).join(";"));
   const blob = new Blob(["\ufeff" + lines.join("\r\n")], {type: "text/csv;charset=utf-8"});
   const url = URL.createObjectURL(blob), link = document.createElement("a");
@@ -563,14 +563,7 @@ $("openChangelog").onclick = event => {
   chrome.tabs.create({url: chrome.runtime.getURL("changelog.html")});
 };
 
-$("model").addEventListener("change", () => {
-  $("customModel").hidden = $("model").value !== "custom";
-  if (!$("customModel").hidden) $("customModel").focus();
-  else {
-    if (selectedModel() !== "auto/economico") $("keyProvider").value = selectedProvider();
-    selectProviderState();
-  }
-});
+$("model").addEventListener("change", () => { $("customModel").hidden = $("model").value !== "custom"; if (!$("customModel").hidden) $("customModel").focus(); else if(selectedModel()!=="auto/economico"){ $("keyProvider").value=selectedProvider();selectProviderState();} });
 $("keyProvider").addEventListener("change",selectProviderState);
 async function persistDraft() {
   if (!initialized) return;
@@ -586,7 +579,7 @@ async function persistDraft() {
     throw error;
   }
 }
-for (const id of ["title", "description", "customModel", "faqCount", "specCount"]) {
+for (const id of ["title", "description", "model", "customModel", "faqCount", "specCount"]) {
   $(id).addEventListener("input", () => { void persistDraft().catch(() => {}); });
 }
 for (const id of ["model", "faqCount", "specCount"]) $(id).addEventListener("change", () => { void persistDraft().catch(() => {}); });

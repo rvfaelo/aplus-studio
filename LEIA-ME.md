@@ -1,15 +1,31 @@
 # A+ Studio
 
-Versão 1.5.5. Extensão Chrome Manifest V3 para organizar, planejar, gerar, revisar, aprovar, preencher e auditar conteúdo Amazon A+ com roteamento econômico entre KiraAI, Gemini, Groq e DeepSeek.
+Versão 1.5.3. Extensão Chrome Manifest V3 para organizar, planejar, gerar, revisar, aprovar, preencher e auditar conteúdo Amazon A+ com roteamento econômico entre KiraAI, Gemini, Groq e DeepSeek.
 
-### Interface 1.5.5
+### Correção da revisão 1.5.3
 
-### Correção 1.5.5
+- O cálculo de repetição agora compara apenas campos equivalentes: headline com headline e corpo com corpo.
+- Especificações técnicas, FAQ e a repetição natural do nome do produto não geram mais alertas de variedade.
+- Um texto curto contido em outro texto maior não recebe mais automaticamente 100% de semelhança.
+- O botão **Corrigir repetições com IA** reescreve somente os campos realmente repetidos e preserva todos os demais textos.
+- Relatórios antigos são recalculados antes de consumir a API; se eram falsos positivos, apenas desaparecem sem gastar tokens.
 
-- O botão **Preencher aba da Amazon aberta** usa exclusivamente `https://sellercentral.amazon.com/enhanced-content/content-manager/workflow/ebc-premium/content/new/edit`.
-- Se essa URL exata já estiver aberta na janela atual, o Studio ativa essa aba. Caso contrário, abre a URL canônica em uma nova aba.
-- O worker valida a URL novamente antes de mapear ou escrever qualquer campo; outras páginas do Seller Central são recusadas para preenchimento.
-- O conector automático foi restringido à rota A+ Premium e o tempo máximo de carregamento foi ampliado para reduzir falhas em páginas lentas.
+### Melhorias 1.5.2
+
+- **Mapear campos** começa pronto para receber o primeiro clique e avança automaticamente ao próximo texto depois de cada associação; o botão agora serve apenas para pausar ou continuar.
+- Dimensões seguem o padrão `32 cm (largura) x 32 cm (altura) x 10 cm (profundidade)`, com unidade e significado visíveis em cada número.
+- A auditoria captura o SKU exibido no catálogo e o exporta imediatamente ao lado do ASIN no CSV.
+- A revisão automática mostra o campo, o trecho e a ação recomendada para cada número sem apoio, além dos pares de campos repetidos, percentual de semelhança e termos em comum.
+- Números em medidas compactas, como `10x20x30`, passam a ser reconhecidos corretamente na descrição e não geram falso alerta.
+
+### Diagnóstico 1.5.1
+
+- O botão **Diagnosticar conexão** testa o projeto, a aprovação, os textos, as abas do Seller Central, a URL de edição, o carregamento, a versão do conector, login/captcha, erros de reprodução, módulos e campos reconhecidos.
+- O relatório explica o bloqueio principal e pode ser copiado sem incluir API Keys, textos do produto, cookies ou parâmetros privados da URL.
+- **Preencher aba da Amazon aberta** agora ignora páginas de Catálogo, início e outras seções do Seller Central; somente uma aba real do editor A+ Premium pode ser escolhida.
+- A conexão entre a extensão e a aba é identificada pela versão. Uma aba com conector antigo recebe uma tentativa de recuperação automática sem recarregar.
+
+### Interface 1.5.0
 
 - Painel reformulado com hierarquia visual mais clara e melhor aproveitamento da tela.
 - Cor principal `#B2E146`, com contraste adequado para leitura e ações.
@@ -26,7 +42,7 @@ Versão 1.5.5. Extensão Chrome Manifest V3 para organizar, planejar, gerar, rev
 
 - FAQ e especificações agora podem repetir dados técnicos importantes, como medidas, material, quantidade, cor, modelo, capacidade e indicação de uso.
 - A mensagem de menos de 4 especificações deixou de bloquear a aprovação e o preenchimento; agora é apenas um aviso para revisar a ficha.
-- Histórico 1.4.2: o botão procurava qualquer aba do Seller Central. Na 1.5.5 esse comportamento foi substituído pela URL A+ Premium canônica.
+- O botão do Studio procura uma aba aberta do Seller Central na mesma janela, em vez de exigir que a aba ativa seja a Amazon.
 - As especificações restantes continuam sendo reorganizadas em sequência depois que marcadores vazios ou medidas repetidas são removidos.
 - Quatro servidores independentes: Google Gemini, KiraAI.vn, Groq e DeepSeek.
 - KiraAI configurado com os identificadores atuais `qwen3.8-flash` e `glm-5.3-free`.
@@ -62,13 +78,13 @@ Ela foi criada como uma extensão separada, usando como base técnica a extensã
 
 ## Funções
 
-- **Painel em tela cheia:** clique em **Abrir painel A+ Studio 1.1** para trabalhar por etapas.
+- **Painel em tela cheia:** clique em **Abrir painel A+ Studio 1.5** para trabalhar por etapas.
 - **Projetos por ASIN:** cada produto mantém ficha factual, textos, briefings, nota, status e aprovação próprios.
 - **Geração em massa:** selecione até 50 projetos e gere os rascunhos em uma fila que preserva o resultado e o erro de cada produto.
 - **Revisão antes do preenchimento:** geração, edição, validação, aprovação e preenchimento são ações separadas.
 - **Editor campo a campo:** contador de caracteres, provável origem factual e regeneração individual.
 - **Planejamento A+ com IA:** diagnóstico do produto, informações ausentes, relações entre características e benefícios e oito briefings de imagem nos tamanhos dos módulos usados.
-- **Geração e preenchimento:** gera os textos pelo provedor escolhido ou pelo modo automático e preenche os módulos reconhecidos exclusivamente no editor A+ Premium da URL canônica configurada.
+- **Geração e preenchimento:** gera os textos pelo provedor escolhido ou pelo modo automático e preenche os módulos reconhecidos na edição aberta do Seller Central.
 - **Nota de qualidade local:** avalia limites, campos obrigatórios, números sem apoio, linguagem arriscada, repetição e formatação. Essa nota não faz outra chamada à IA.
 - **Auditoria do catálogo:** captura ou recebe até 250 ASINs e verifica se há A+ padrão ou Premium publicado na página pública da Amazon Brasil.
 - **Exportações:** baixa o planejamento em TXT, os textos em TXT e a auditoria em CSV.
@@ -78,7 +94,7 @@ Os conceitos de diagnóstico, característica-benefício e briefing visual foram
 
 ## Instalar como nova extensão
 
-1. Extraia o ZIP em uma pasta nova e definitiva, por exemplo `Aplus-Studio-1.1`.
+1. Extraia o ZIP em uma pasta nova e definitiva, por exemplo `Aplus-Studio-1.5.3`.
 2. Abra `chrome://extensions` no Chrome.
 3. Ative **Modo do desenvolvedor**.
 4. Clique em **Carregar sem compactação**.
@@ -119,7 +135,7 @@ Os oito briefings cobrem dois banners de 1464 × 600, quatro imagens de 300 × 2
 
 ## Gerar, preencher e avaliar
 
-### Fluxo recomendado no painel 1.1
+### Fluxo recomendado no painel 1.5
 
 1. Abra o painel pelo primeiro botão do popup.
 2. Crie um projeto e informe o ASIN, o título e a descrição; ou use **Carregar produto** para tentar importar os dados públicos disponíveis.
@@ -128,13 +144,15 @@ Os oito briefings cobrem dois banners de 1464 × 600, quatro imagens de 300 × 2
 5. Revise e edite os textos. Use **Regenerar** somente no campo necessário.
 6. Valide e corrija os avisos. Se houver menos de quatro especificações, complete com dados reais do título, descrição ou ficha factual.
 7. Aprove o produto individualmente.
-8. Use **Preencher aba da Amazon aberta**. O Studio ativa uma aba já aberta na URL A+ Premium canônica ou abre essa URL automaticamente.
+8. Abra a edição A+ no Seller Central em outra aba da mesma janela, volte ao Studio e use **Preencher aba da Amazon aberta**.
+
+Se o botão não localizar ou preencher a aba, use **Diagnosticar conexão**. O teste é somente leitura e indica separadamente URL incorreta, aba carregando, conector desatualizado, login/verificação, erro de reprodução de módulo, módulos ausentes e campos não reconhecidos.
 
 A fila apenas gera rascunhos. Ela nunca aprova, salva, envia para análise ou publica conteúdo em massa. O upload das imagens continua manual.
 
 ### Fluxo rápido pelo popup
 
-1. Abra a URL A+ Premium canônica `https://sellercentral.amazon.com/enhanced-content/content-manager/workflow/ebc-premium/content/new/edit` com os campos visíveis.
+1. Abra a edição do A+ no Seller Central com os campos visíveis.
 2. Preencha título e descrição na extensão.
 3. Clique em **Gerar e Preencher**.
 4. Confira o relatório e revise o conteúdo antes de salvar na Amazon.

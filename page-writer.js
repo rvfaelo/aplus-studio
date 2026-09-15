@@ -27,7 +27,7 @@ export async function writeAmazonField(marker, value, expectedBefore, expectedHr
     .replace(/\s+/g, " ").trim();
   const current = () => kat ? String(el.value ?? el.getAttribute("value") ?? "") : el.innerText ?? el.textContent ?? "";
   if ((!kat && !draft) || !el.isConnected || el.disabled || el.readOnly || !el.getClientRects().length ||
-    normalize(current()) !== normalize(expectedBefore)) return {written: false};
+    current() !== expectedBefore) return {written: false};
   for (let p = el; p; p = p.parentElement || p.getRootNode()?.host || p.ownerDocument?.defaultView?.frameElement) {
     const style = p.ownerDocument.defaultView.getComputedStyle(p);
     if (p.hidden || p.inert || p.getAttribute("aria-hidden") === "true" ||
@@ -92,37 +92,23 @@ export async function writeAmazonField(marker, value, expectedBefore, expectedHr
   // editorState, mas o fiber (i=3) tem. Handler é onChange, e o construtor do
   // estado expõe createWithContent + moveFocusToEnd.
   const findDraftHandler = () => {
-    const from = (props, instance = null) => {
-      const state = props?.editorState || instance?.props?.editorState || instance?.state?.editorState;
-      if (!state || typeof state.getCurrentContent !== "function") return null;
-      if (instance && typeof instance._onChange === "function")
-        return {state, apply: next => instance._onChange(next)};
-      const owner = props || instance?.props;
-      const handler = typeof owner?.onChange === "function" ? owner.onChange
-        : typeof owner?.onEditorStateChange === "function" ? owner.onEditorStateChange : null;
-      return handler ? {state, apply: next => handler.call(instance || owner, next)} : null;
-    };
-
-    // React pode prender as props no contenteditable ou em um ancestral DOM.
-    for (let node = el, depth = 0; node && depth < 12; node = node.parentElement, depth++) {
-      const keys = Object.getOwnPropertyNames(node);
-      for (const key of keys) {
-        if (!key.startsWith("__reactProps$")) continue;
-        const found = from(node[key]);
-        if (found) return found;
-      }
-      for (const key of keys.filter(k => k.startsWith("__reactFiber$") || k.startsWith("__reactInternalInstance$"))) {
-        const seen = new Set();
-        for (let fiber = node[key], i = 0; fiber && i < 300 && !seen.has(fiber); fiber = fiber.return, i++) {
-          seen.add(fiber);
-          for (const candidate of [fiber, fiber.alternate].filter(Boolean)) {
-            const found = from(candidate.memoizedProps, candidate.stateNode)
-              || from(candidate.pendingProps, candidate.stateNode)
-              || from(candidate.stateNode?.props, candidate.stateNode);
-            if (found) return found;
-          }
-        }
-      }
+    const keys = Object.keys(el);
+    for (const key of keys) {
+      if (!key.startsWith("__reactProps$")) continue;
+      const props = el[key];
+      if (props?.editorState && typeof props.editorState.getCurrentContent === "function"
+        && typeof props.onChange === "function") return {state: props.editorState, handler: props.onChange};
+    }
+    const fiberKey = keys.find(k => k.startsWith("__reactFiber$") || k.startsWith("__reactInternalInstance$"));
+    if (!fiberKey) return null;
+    let fiber = el[fiberKey];
+    for (let i = 0; fiber && i < 300; i++, fiber = fiber.return) {
+      const props = fiber.memoizedProps || fiber.pendingProps;
+      if (!props?.editorState || typeof props.editorState.getCurrentContent !== "function") continue;
+      const handler = typeof props.onChange === "function" ? props.onChange
+        : typeof props.onEditorStateChange === "function" ? props.onEditorStateChange : null;
+      if (!handler) continue;
+      return {state: props.editorState, handler};
     }
     return null;
   };
@@ -131,18 +117,15 @@ export async function writeAmazonField(marker, value, expectedBefore, expectedHr
     try {
       const found = findDraftHandler();
       if (!found) return false;
-      const {state, apply} = found;
+      const {state, handler} = found;
       const EditorState = state.constructor;
       const ContentState = state.getCurrentContent().constructor;
       if (typeof ContentState.createFromText !== "function") return false;
+      if (typeof EditorState.createWithContent !== "function") return false;
       const content = ContentState.createFromText(value);
-      let next;
-      if (typeof EditorState.push === "function") next = EditorState.push(state, content, "insert-characters");
-      else if (typeof EditorState.createWithContent === "function")
-        next = EditorState.createWithContent(content, typeof state.getDecorator === "function" ? state.getDecorator() : undefined);
-      else return false;
+      let next = EditorState.createWithContent(content);
       if (typeof EditorState.moveFocusToEnd === "function") next = EditorState.moveFocusToEnd(next);
-      apply(next);
+      handler(next);
       return true;
     } catch { return false; }
   };
@@ -180,6 +163,24 @@ export async function writeAmazonField(marker, value, expectedBefore, expectedHr
     } catch { return false; }
   };
 
+  const writeDraftDom = async () => {
+    if (!setSelectionAll()) return false;
+    const before = String(el.innerText ?? el.textContent ?? "");
+    const deleted = doc.execCommand("delete", false);
+    if (!deleted && before.replace(/\s+/g, "").trim() !== "") return false;
+    if (value && !doc.execCommand("insertText", false, value)) {
+      if (before) {
+        setSelectionAll();
+        doc.execCommand("insertText", false, before);
+      }
+      fire("input");
+      return false;
+    }
+    fire("input");
+    fire("change");
+    return true;
+  };
+
   // --- Estratégias, em ordem de confiabilidade ---
 
   // 1. Sync direto do editorState pelo fiber (confirmado no diagnóstico).
@@ -208,8 +209,14 @@ export async function writeAmazonField(marker, value, expectedBefore, expectedHr
     }
   }
 
-  // Nunca altera somente o DOM como último recurso. No Draft.js isso cria o
-  // texto sobre o placeholder, mas não muda o estado que a Amazon salva.
+  // 4. execCommand, apenas se as rotas do React não aplicaram.
+  if (await writeDraftDom()) {
+    if (await confirmWithRetries([700, 500])) {
+      el.blur();
+      return {written: location.href === expectedHref};
+    }
+  }
+
   el.blur();
   return {written: false};
 }

@@ -98,13 +98,31 @@ export function buildFullImagePrompt(plan, title = "") {
   return lines.join("\n");
 }
 
-const words = value => new Set(clean(value).toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "")
-  .replace(/[^a-z0-9 ]/g, " ").split(/\s+/).filter(word => word.length > 3));
-const similarity = (a, b) => {
-  const left = words(a), right = words(b);
-  if (!left.size || !right.size) return 0;
-  const common = [...left].filter(word => right.has(word)).length;
-  return common / Math.min(left.size, right.size);
+const REPETITION_STOPWORDS = new Set([
+  "ainda", "algum", "alguma", "antes", "cada", "como", "com", "deixa", "este", "esta", "isso", "mais",
+  "mesmo", "muito", "para", "pela", "pelo", "pode", "produto", "seu", "seus", "sua", "suas", "tambem",
+  "todo", "toda", "todos", "todas", "uma", "usar", "uso"
+]);
+const comparableText = value => clean(value).toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+  .replace(/[^a-z0-9 ]/g, " ").replace(/\s+/g, " ").trim();
+const words = (value, ignored = new Set()) => new Set(comparableText(value).split(/\s+/)
+  .filter(word => word.length > 3 && !REPETITION_STOPWORDS.has(word) && !ignored.has(word)));
+const similarity = (a, b, ignored = new Set()) => {
+  const left = words(a, ignored), right = words(b, ignored);
+  if (!left.size || !right.size) return {score: 0, common: [], left, right};
+  const common = [...left].filter(word => right.has(word));
+  // Dice exige equilíbrio entre os dois textos. O cálculo antigo dividia pelo
+  // menor texto e dizia 100% sempre que uma especificação curta aparecia num corpo maior.
+  return {score: (2 * common.length) / (left.size + right.size), common, left, right};
+};
+const fieldLabel = entry => clean(entry.slot.label || entry.slot.key, 160);
+const moduleIdentity = entry => {
+  const numbered = /^(four|two|faq|specs)_(\d+)_/.exec(entry.slot.key || "");
+  return numbered ? `${numbered[1]}_${numbered[2]}` : entry.slot.module || entry.slot.key;
+};
+const excerpt = (value, max = 140) => {
+  const text = clean(value, 1000);
+  return text.length > max ? `${text.slice(0, max - 1).trimEnd()}…` : text;
 };
 
 export function scoreAplus({slots = [], texts = {}, title = "", description = ""}) {
@@ -122,22 +140,53 @@ export function scoreAplus({slots = [], texts = {}, title = "", description = ""
   if (requiredFilled < required.length) issues.push(`${required.length - requiredFilled} campo(s) obrigatório(s) estão vazios.`);
   criteria.push({name: "Campos obrigatórios", score: completenessScore, max: 20});
 
-  const sourceNumbers = new Set(`${title} ${description}`.match(/\b\d+(?:[.,]\d+)?\b/g)?.map(value => value.replace(",", ".")) || []);
-  const unsupported = new Set();
-  for (const entry of present) for (const number of entry.text.match(/\b\d+(?:[.,]\d+)?\b/g) || [])
-    if (!sourceNumbers.has(number.replace(",", "."))) unsupported.add(number);
+  const sourceNumbers = new Set(`${title} ${description}`.match(/(?<!\d)\d+(?:[.,]\d+)?(?!\d)/g)?.map(value => value.replace(",", ".")) || []);
+  const unsupported = new Map();
+  for (const entry of present) for (const number of entry.text.match(/(?<!\d)\d+(?:[.,]\d+)?(?!\d)/g) || []) {
+    const normalized = number.replace(",", ".");
+    if (sourceNumbers.has(normalized)) continue;
+    if (!unsupported.has(normalized)) unsupported.set(normalized, {display: number, entries: []});
+    const record = unsupported.get(normalized);
+    if (!record.entries.some(item => item.slot.key === entry.slot.key)) record.entries.push(entry);
+  }
   const risky = present.filter(entry => /(compre agora|frete gr[aá]tis|desconto|oferta limitada|melhor do mercado|n[ºo°]\s*1|garantia de \d|100% garantido)/i.test(entry.text));
   const factualScore = Math.max(0, 25 - unsupported.size * 5 - risky.length * 5);
-  if (unsupported.size) issues.push(`Números sem apoio na descrição: ${[...unsupported].join(", ")}.`);
+  if (unsupported.size) {
+    const displays = [...unsupported.values()].map(item => item.display);
+    issues.push(`Números sem apoio nos dados do produto: ${displays.join(", ")}. Eles aparecem no conteúdo A+, mas não foram encontrados no título nem na descrição. Confira a fonte de cada número ou remova-o.`);
+    for (const {display, entries: locations} of unsupported.values()) {
+      const labels = locations.map(fieldLabel).join("; ");
+      const sample = excerpt(locations[0]?.text || "");
+      issues.push(`Número ${display}: aparece em "${labels}", no trecho "${sample}". Ação: confirme esse número nos dados do produto ou ajuste o campo antes de publicar.`);
+    }
+  }
   if (risky.length) issues.push(`${risky.length} campo(s) contêm linguagem promocional ou alegação arriscada.`);
   criteria.push({name: "Segurança factual", score: factualScore, max: 25});
 
-  const content = present.filter(entry => !["name", "module_heading"].includes(entry.slot.role));
-  let repeats = 0;
-  for (let i = 0; i < content.length; i++) for (let j = i + 1; j < content.length; j++)
-    if (similarity(content[i].text, content[j].text) >= 0.72) repeats++;
-  const varietyScore = Math.max(0, 20 - repeats * 3);
-  if (repeats) issues.push(`${repeats} possível(is) repetição(ões) entre os módulos.`);
+  // Variedade mede apenas textos publicitários equivalentes. Título x corpo,
+  // FAQ e ficha técnica podem repetir naturalmente o nome e os fatos do produto.
+  const content = present.filter(entry => ["headline", "body"].includes(entry.slot.role));
+  const titleWords = words(title);
+  const repetitions = [];
+  for (let i = 0; i < content.length; i++) for (let j = i + 1; j < content.length; j++) {
+    if (moduleIdentity(content[i]) === moduleIdentity(content[j])) continue;
+    if (content[i].slot.role !== content[j].slot.role) continue;
+    const exact = comparableText(content[i].text) === comparableText(content[j].text);
+    const compared = similarity(content[i].text, content[j].text, titleWords);
+    const minimumCommon = content[i].slot.role === "headline" ? 2 : 4;
+    if (!exact && (compared.score < 0.72 || compared.common.length < minimumCommon)) continue;
+    const common = (compared.common.length ? compared.common : [...words(content[i].text)].filter(word => words(content[j].text).has(word))).slice(0, 8);
+    repetitions.push({left: content[i], right: content[j], score: exact ? 1 : compared.score, common});
+  }
+  const varietyScore = Math.max(0, 20 - repetitions.length * 3);
+  if (repetitions.length) {
+    issues.push(`${repetitions.length} par(es) de textos muito semelhantes foram encontrados em módulos diferentes. Isso pode fazer o A+ parecer repetitivo.`);
+    for (const item of repetitions.slice(0, 10)) {
+      const terms = item.common.length ? ` Termos em comum: ${item.common.join(", ")}.` : "";
+      issues.push(`Repetição de ${Math.round(item.score * 100)}% entre "${fieldLabel(item.left)}" e "${fieldLabel(item.right)}".${terms} Trechos: "${excerpt(item.left.text, 90)}" / "${excerpt(item.right.text, 90)}". Ação: mantenha um benefício em um campo e use o outro para um uso, detalhe ou dúvida diferente.`);
+    }
+    if (repetitions.length > 10) issues.push(`${repetitions.length - 10} outro(s) par(es) semelhante(s) não foram listados; revise os módulos restantes.`);
+  }
   criteria.push({name: "Variedade dos módulos", score: varietyScore, max: 20});
 
   const formatting = present.filter(entry => /[<>]|https?:\/\/|www\.|[\u2013\u2014]/i.test(entry.text));
@@ -146,5 +195,8 @@ export function scoreAplus({slots = [], texts = {}, title = "", description = ""
   criteria.push({name: "Clareza e formatação", score: readabilityScore, max: 15});
   const score = criteria.reduce((total, item) => total + item.score, 0);
   const strengths = criteria.filter(item => item.score === item.max).map(item => item.name);
-  return {score, criteria, issues, strengths, checkedFields: entries.length};
+  return {score, criteria, issues, strengths, checkedFields: entries.length,
+    repetitionTargets: [...new Set(repetitions.map(item => item.right.slot.key))],
+    repetitions: repetitions.map(item => ({leftKey: item.left.slot.key, rightKey: item.right.slot.key,
+      leftLabel: fieldLabel(item.left), rightLabel: fieldLabel(item.right), score: Math.round(item.score * 100)}))};
 }

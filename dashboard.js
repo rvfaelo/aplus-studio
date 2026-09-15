@@ -1,4 +1,4 @@
-import {makeSlots, PREMIUM_EDITOR_URL, isPremiumEditorURL} from "./shared.js";
+import {makeSlots, isAplusEditorURL, SELLER_TAB_PATTERNS} from "./shared.js";
 import {buildFullImagePrompt} from "./planning.js";
 import {createProject, evidenceFor, parseQueue, PROJECT_STATUS} from "./projects.js";
 import {connectPanel} from "./panel-connection.js";
@@ -6,16 +6,16 @@ import {providerForModel} from "./providers.js";
 
 const $ = id => document.getElementById(id);
 const send = connectPanel(chrome.runtime);
-const premiumEditorTabId = async () => {
-  const tabs = await chrome.tabs.query({currentWindow: true});
-  const target = tabs.find(tab => Number.isInteger(tab?.id) && isPremiumEditorURL(tab.url));
-  if (target?.id) {
-    await chrome.tabs.update(target.id, {active: true});
-    return target.id;
-  }
-  const created = await chrome.tabs.create({url: PREMIUM_EDITOR_URL, active: true});
-  if (!created?.id) throw new Error("Não foi possível abrir o editor A+ Premium.");
-  return created.id;
+const sellerTabsInWindow = () => chrome.tabs.query({currentWindow: true, url: SELLER_TAB_PATTERNS});
+const recentFirst = tabs => [...tabs].sort((a, b) => Number(b.lastAccessed || 0) - Number(a.lastAccessed || 0));
+const sellerTabId = async () => {
+  const [tab] = await chrome.tabs.query({active: true, currentWindow: true});
+  if (tab?.id && isAplusEditorURL(tab.url)) return tab.id;
+  const sellerTabs = await sellerTabsInWindow();
+  const target = recentFirst(sellerTabs.filter(item => item.id && isAplusEditorURL(item.url)))[0];
+  if (!target?.id) throw new Error("Nenhuma aba do editor A+ Premium foi encontrada nesta janela. Use Diagnosticar conexão para ver exatamente o que falta.");
+  await chrome.tabs.update(target.id, {active: true});
+  return target.id;
 };
 
 let projects = [], activeId = "", projectJob = null, pollTimer, toastTimer;
@@ -23,12 +23,44 @@ let currentTab = "product", saving = false, dirty = false;
 let keySaved = false;
 let keyStates={};
 const providerModel=()=>({gemini:"gemini/gemini-3.5-flash",kira:"kira/qwen3.8-flash",groq:"openai/gpt-oss-20b",deepseek:"deepseek/deepseek-flash"})[$("keyProvider").value];
-let productTabId = null, operationBusy = false;
+let productTabId = null, operationBusy = false, lastAmazonDiagnostic = null;
 const current = () => projects.find(item => item.id === activeId) || null;
 
 function toast(message, error = false) {
   clearTimeout(toastTimer); $("toast").textContent = message; $("toast").className = `toast${error ? " error" : ""}`; $("toast").hidden = false;
   toastTimer = setTimeout(() => { $("toast").hidden = true; }, 4500);
+}
+
+function diagnosticText(report) {
+  if (!report) return "";
+  const lines = ["DIAGNÓSTICO DE PREENCHIMENTO A+", `Versão: ${report.version}`, `Data UTC: ${report.generatedAt}`,
+    `Resultado: ${report.summary}`, `Recomendação: ${report.recommendation}`, ""];
+  if (report.target) lines.push(`Aba: ${report.target.url}`, `Estado da aba: ${report.target.status}`, "");
+  lines.push("MÉTRICAS", `Abas Seller Central: ${report.metrics?.sellerTabs ?? 0}`,
+    `Editores A+ Premium: ${report.metrics?.editorTabs ?? 0}`,
+    `Campos reconhecidos: ${report.metrics?.foundFields ?? 0}/${report.metrics?.expectedFields ?? 0}`,
+    `Campos de texto visíveis: ${report.metrics?.candidates ?? 0}`,
+    `Módulos: ${JSON.stringify(report.metrics?.moduleCounts || {})}`, "", "VERIFICAÇÕES");
+  for (const check of report.checks || []) lines.push(`[${check.status.toUpperCase()}] ${check.label}: ${check.detail}`);
+  return lines.join("\n");
+}
+
+function renderAmazonDiagnostic(report, running = false) {
+  const box = $("amazonDiagnostic"); box.hidden = false;
+  $("diagnosticChecks").replaceChildren();
+  $("diagnosticSummary").textContent = running ? "Executando diagnóstico…" : report?.summary || "Não foi possível concluir.";
+  $("diagnosticRecommendation").textContent = running ? "Aguarde enquanto a extensão testa a aba sem alterar a Amazon." : report?.recommendation || "Tente novamente.";
+  box.className = `diagnostic-report ${running ? "running" : report?.status || "error"}`;
+  $("copyAmazonDiagnostic").disabled = running || !report;
+  if (running || !report) return;
+  for (const check of report.checks || []) {
+    const row = document.createElement("div"); row.className = `diagnostic-check ${check.status}`;
+    const mark = document.createElement("span"); mark.className = "diagnostic-mark";
+    mark.textContent = check.status === "ok" ? "✓" : check.status === "warning" ? "!" : "×";
+    const content = document.createElement("div"), label = document.createElement("strong"), detail = document.createElement("p");
+    label.textContent = check.label; detail.textContent = check.detail; content.append(label, detail); row.append(mark, content);
+    $("diagnosticChecks").append(row);
+  }
 }
 
 function factRow(item = {}) {
@@ -155,6 +187,17 @@ function renderValidation(project) {
   const all = [...(project.validationWarnings || []), ...(quality?.issues || [])];
   if (!all.length) { const p = document.createElement("p"); p.className = "issue ok"; p.textContent = "Nenhum problema automático encontrado."; issues.append(p); }
   else for (const message of [...new Set(all)]) { const p = document.createElement("p"); p.className = "issue"; p.textContent = message; issues.append(p); }
+  const repetitionTargets = quality?.repetitionTargets || [];
+  const legacyRepetitionReport = quality && !Array.isArray(quality.repetitionTargets) &&
+    (quality.issues || []).some(message => /repeti[cç][aã]o|textos muito semelhantes/i.test(message));
+  $("fixRepetitions").hidden = repetitionTargets.length === 0 && !legacyRepetitionReport;
+  $("fixRepetitions").disabled = operationBusy;
+  $("fixRepetitionsHint").hidden = repetitionTargets.length === 0 && !legacyRepetitionReport;
+  $("fixRepetitionsHint").textContent = legacyRepetitionReport
+    ? "Este relatório foi criado pelo cálculo anterior. O botão primeiro refaz a análise e só usa a API se ainda houver repetição real."
+    : repetitionTargets.length
+    ? `A correção usa a API selecionada e reescreve somente ${repetitionTargets.length} campo${repetitionTargets.length === 1 ? "" : "s"} repetido${repetitionTargets.length === 1 ? "" : "s"}. Os demais textos permanecem iguais.`
+    : "";
   const map = $("coverageMap"); map.replaceChildren();
   for (const module of [...new Set(slots.map(slot => slot.module))]) {
     const moduleSlots = slots.filter(slot => slot.module === module), present = moduleSlots.filter(slot => project.texts?.[slot.key]).length;
@@ -233,12 +276,7 @@ $("replaceSavedKey").onclick = () => { $("newKeyBox").hidden=false; $("saveKey")
 $("saveProject").onclick = () => save(true).catch(error => toast(error.message, true));
 $("addFact").onclick = () => $("facts").append(factRow());
 $("projectSearch").addEventListener("input", renderProjects);
-for (const id of ["asin", "title", "description", "faqCount", "specCount"]) $(id).addEventListener("input", markChanged);
-$("model").addEventListener("change", () => {
-  markChanged();
-  const provider = providerForModel($("model").value);
-  if (provider !== "auto") $("keyProvider").value = provider;
-});
+for (const id of ["asin", "title", "description", "model", "faqCount", "specCount"]) $(id).addEventListener("input", markChanged);
 for (const button of document.querySelectorAll(".tabs button")) button.onclick = () => switchTab(button.dataset.tab);
 
 $("batchAdd").onclick = async () => {
@@ -276,29 +314,13 @@ $("captureProduct").onclick = async () => {
     toast("Dados da página capturados. Revise antes de gerar.");
   } catch(error) { toast(error.message,true); }
 };
-function setPlanBusy(value) {
-  operationBusy = value;
-  $("createPlan").disabled = value;
-  $("generateDraft").disabled = value;
-  $("saveProject").disabled = value;
-  $("deleteProject").disabled = value;
-  $("importAsin").disabled = value;
-  $("openProduct").disabled = value;
-  $("captureProduct").disabled = value || !productTabId;
-  $("addFact").disabled = value;
-  $("model").disabled = value;
-  $("faqCount").disabled = value;
-  $("specCount").disabled = value;
-  $("createPlan").textContent = value ? "Gerando planejamento…" : "Criar planejamento + textos A+";
-}
-
 $("createPlan").onclick = async () => {
   if (operationBusy) return;
-  setPlanBusy(true);
+  operationBusy=true; $("editor").inert=true;
   try { const project = await save(false); toast("Gerando textos A+ e depois os prompts de imagem…");
     const result = await send("projectPlan", {project}); projects = result.projects; activeId = result.activeProjectId; renderAll(); switchTab("texts"); toast("Textos A+ e prompts concluídos.");
   } catch (error) { toast(error.message, true); }
-  finally { setPlanBusy(false); await refresh(); }
+  finally { operationBusy=false; $("editor").inert=false; await refresh(); }
 };
 $("copyAllPrompts").onclick = async () => {
   const project = current(), prompt = buildFullImagePrompt(project?.plan, project?.title); if (!prompt) return toast("Crie o planejamento primeiro.", true);
@@ -310,13 +332,49 @@ $("validateProject").onclick = async () => {
     const saved = await send("projectSave", {project}); projects = saved.projects; activeId = saved.activeProjectId; renderAll(); toast(`Validação concluída: ${result.quality.score}/100.`);
   } catch (error) { toast(error.message, true); }
 };
+$("fixRepetitions").onclick = async () => {
+  if (operationBusy) return;
+  operationBusy = true; $("editor").inert = true;
+  const button = $("fixRepetitions"), originalLabel = button.textContent; button.textContent = "Corrigindo…"; button.disabled = true;
+  try {
+    const project = await save(false); toast("Reescrevendo somente os campos realmente repetidos…");
+    const result = await send("projectFixRepetitions", {project});
+    projects = result.projects; activeId = result.activeProjectId; dirty = false; renderAll(); switchTab("validation");
+    toast(result.corrected === 0
+      ? "Relatório atualizado. Nenhuma repetição real foi encontrada."
+      : result.remaining
+      ? `${result.corrected} campo(s) reescrito(s). Ainda restam ${result.remaining} repetição(ões) para revisar.`
+      : `${result.corrected} campo(s) reescrito(s). Nenhuma repetição real permaneceu.`);
+  } catch (error) { toast(error.message, true); }
+  finally { operationBusy = false; $("editor").inert = false; button.textContent = originalLabel; await refresh(); }
+};
 $("approveProject").onclick = async () => {
   try { const project = await save(false), result = await send("projectApprove", {project}); projects = result.projects; activeId = result.activeProjectId; renderAll(); toast("Conteúdo aprovado para preenchimento."); }
   catch (error) { toast(error.message, true); switchTab("validation"); }
 };
 $("fillAmazon").onclick = async () => {
-  try { const project = await save(false); const report = await send("projectFill", {project, tabId: await premiumEditorTabId()}); await refresh(); toast(`${report.filled} de ${report.total} campos conferidos. Revise antes de salvar na Amazon.`); }
+  try { const project = await save(false); const report = await send("projectFill", {project, tabId: await sellerTabId()}); await refresh(); toast(`${report.filled} de ${report.total} campos conferidos. Revise antes de salvar na Amazon.`); }
   catch (error) { toast(error.message, true); }
+};
+$("diagnoseAmazon").onclick = async () => {
+  if (operationBusy) return;
+  operationBusy = true; $("diagnoseAmazon").disabled = true; renderAmazonDiagnostic(null, true);
+  try {
+    const project = await save(false);
+    const tabs = await sellerTabsInWindow();
+    lastAmazonDiagnostic = await send("projectDiagnostic", {project, tabIds: tabs.map(tab => tab.id).filter(Number.isSafeInteger)});
+    renderAmazonDiagnostic(lastAmazonDiagnostic);
+    toast(lastAmazonDiagnostic.summary, lastAmazonDiagnostic.status === "error");
+  } catch (error) {
+    lastAmazonDiagnostic = {version: chrome.runtime.getManifest().version, generatedAt: new Date().toISOString(), status: "error",
+      summary: "O diagnóstico não pôde ser concluído.", recommendation: error.message, checks: [], metrics: {}};
+    renderAmazonDiagnostic(lastAmazonDiagnostic); toast(error.message, true);
+  } finally { operationBusy = false; $("diagnoseAmazon").disabled = false; }
+};
+$("copyAmazonDiagnostic").onclick = async () => {
+  const text = diagnosticText(lastAmazonDiagnostic); if (!text) return;
+  try { await navigator.clipboard.writeText(text); toast("Diagnóstico copiado."); }
+  catch { toast("Não foi possível copiar o diagnóstico.", true); }
 };
 $("deleteProject").onclick = async () => {
   if (!confirm("Excluir este projeto? Esta ação não altera nada na Amazon.")) return;
@@ -325,17 +383,17 @@ $("deleteProject").onclick = async () => {
 };
 $("exportTexts").onclick = () => {
   const project = collectProject(); if (!project) return; const slots = project.slots?.length ? project.slots : makeSlots(project.config);
-  const lines = [`A+ STUDIO 1.5 · ${project.title}`, project.asin, "", ...slots.flatMap(slot => [slot.label, project.texts[slot.key] || "", ""]), "OBSERVAÇÕES", ...project.notes];
+  const lines = [`A+ STUDIO 1.5.3 · ${project.title}`, project.asin, "", ...slots.flatMap(slot => [slot.label, project.texts[slot.key] || "", ""]), "OBSERVAÇÕES", ...project.notes];
   const blob = new Blob(["\ufeff" + lines.join("\r\n")], {type:"text/plain;charset=utf-8"}), url = URL.createObjectURL(blob), link = document.createElement("a");
   link.href = url; link.download = `${project.asin || "produto"}-textos-aplus.txt`; link.click(); setTimeout(() => URL.revokeObjectURL(url), 2000);
 };
 
 async function initializePanel() {
   const label = document.querySelector(".topbar h1");
-  label.textContent = "A+ Studio · painel 1.5.5";
+  label.textContent = "A+ Studio · painel 1.5.3";
   try {
     const hello = await send("panelHello");
-    if (hello.version !== "1.5.5") throw new Error(`Painel 1.5.5 conectado à extensão ${hello.version}. Substitua os arquivos na pasta instalada e recarregue a extensão.`);
+    if (hello.version !== "1.5.3") throw new Error(`Painel 1.5.3 conectado à extensão ${hello.version}. Substitua os arquivos na pasta instalada e recarregue a extensão.`);
     label.textContent = `A+ Studio · ${hello.version} conectado`;
     await refresh();
   } catch (error) {

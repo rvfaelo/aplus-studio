@@ -282,10 +282,11 @@ async function request({apiKey, model, input, instructions, signal, onProgress, 
   }
 }
 
-export async function generateTexts({apiKey, title, description, model, slots, signal, onStage = () => {}, onRateLimit = () => {}, fetcher = fetch}) {
+export async function generateTexts({apiKey, title, description, model, slots, signal, revisionPrompt = "", onStage = () => {}, onRateLimit = () => {}, fetcher = fetch}) {
   const source = JSON.stringify({titulo: title, descricao: description});
   let activeSlots=slots, instructions = generationInstructions(activeSlots), preserved=null;
   let input = [{role: "user", content: source}];
+  if (revisionPrompt) input.push({role: "user", content: String(revisionPrompt).slice(0, 30000)});
   let maxOutputTokens = outputBudget(activeSlots);
   let tokenRetry = false;
   let rateLimitRetry = false;
@@ -304,7 +305,7 @@ export async function generateTexts({apiKey, title, description, model, slots, s
       raw = await request({
         apiKey, model, input, instructions, signal, fetcher,
         maxOutputTokens, strictJson, onRateLimit,
-        secrets: [title, description, source],
+        secrets: [title, description, source, revisionPrompt],
         attempt: attempt + 1
       });
     } catch (error) {
@@ -366,6 +367,7 @@ export async function generateTexts({apiKey, title, description, model, slots, s
     stage = `Corrigindo apenas ${activeSlots.length} campo(s) com problema…`;
     input = [
       {role: "user", content: source},
+      ...(revisionPrompt ? [{role: "user", content: String(revisionPrompt).slice(0, 30000)}] : []),
       {role: "user", content:
         `Retorne apenas os campos solicitados no schema, corrigindo estes problemas:\n` +
         `${validated.issues.join("\n")}\n\n` +

@@ -2,7 +2,8 @@
 // Prioriza os data-module-id/data-component-id informados pelo usuário.
 // As heurísticas ficam como fallback para módulos sem esses identificadores.
 (() => {
-  if (globalThis.APlusEngine) return;
+  const engineVersion = globalThis.chrome?.runtime?.getManifest?.().version || "1.5.3";
+  if (globalThis.APlusEngine?.version === engineVersion) return;
   const KAT = 'kat-input,kat-textarea';
   const FIELD = `${KAT},input,textarea,[contenteditable="true"],[contenteditable="plaintext-only"],[role="textbox"]`;
   const EXCLUDED = /\b(asin|sku|search|pesquisar|pesquisa|buscar|alt text|alternative text|texto alternativo|palavras chave da imagem|image keywords|tags da imagem|nome do conteudo|content name|nome do projeto|project name|language|idioma|url|link)\b/;
@@ -316,5 +317,5 @@
     return el.isConnected && clean(read(el)) === clean(value);
   }
 
-  globalThis.APlusEngine = {discover, discoverAmazon, descriptor, visible, read, write, clean, roots, wait, katHost};
+  globalThis.APlusEngine = {version: engineVersion, discover, discoverAmazon, descriptor, visible, read, write, clean, roots, wait, katHost};
 })();

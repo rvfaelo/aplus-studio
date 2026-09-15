@@ -1,12 +1,18 @@
 // Regras compartilhadas pelo popup, pelo worker e pelos testes. Sem dependências.
 export const DEFAULTS = Object.freeze({model: "auto/economico", faqCount: 5, specCount: 6});
 
-export const PREMIUM_EDITOR_URL = "https://sellercentral.amazon.com/enhanced-content/content-manager/workflow/ebc-premium/content/new/edit";
-
-export function isPremiumEditorURL(value) {
-  try { return new URL(value || "").href === PREMIUM_EDITOR_URL; }
-  catch { return false; }
-}
+export const SELLER_HOSTS = Object.freeze([
+  "sellercentral.amazon.com.br", "sellercentral.amazon.com", "sellercentral.amazon.ca",
+  "sellercentral.amazon.com.mx", "sellercentral.amazon.co.uk", "sellercentral.amazon.de",
+  "sellercentral.amazon.fr", "sellercentral.amazon.it", "sellercentral.amazon.es",
+  "sellercentral.amazon.nl", "sellercentral.amazon.se", "sellercentral.amazon.pl",
+  "sellercentral.amazon.com.be", "sellercentral.amazon.ie", "sellercentral.amazon.co.jp",
+  "sellercentral.amazon.in", "sellercentral.amazon.com.au", "sellercentral.amazon.sg",
+  "sellercentral.amazon.ae", "sellercentral.amazon.sa", "sellercentral.amazon.com.tr",
+  "sellercentral.amazon.co.za"
+]);
+export const SELLER_TAB_PATTERNS = Object.freeze(SELLER_HOSTS.map(host => `https://${host}/*`));
+export const APLUS_PREMIUM_EDITOR_URL = "https://sellercentral.amazon.com/enhanced-content/content-manager/workflow/ebc-premium/content/new/edit";
 
 export function settings(input = {}) {
   const integer = (value, fallback, max) => Number.isInteger(Number(value)) &&
@@ -20,9 +26,25 @@ export function isSellerURL(value) {
   try {
     const u = new URL(value);
     // Lista explícita: rejeita amazon.com.evil.example e subdomínios parecidos.
-    return u.protocol === "https:" &&
-      /^sellercentral\.amazon\.(com\.br|com|ca|com\.mx|co\.uk|de|fr|it|es|nl|se|pl|com\.be|ie|co\.jp|in|com\.au|sg|ae|sa|com\.tr|co\.za)$/.test(u.hostname);
+    return u.protocol === "https:" && SELLER_HOSTS.includes(u.hostname);
   } catch { return false; }
+}
+
+export function isAplusEditorURL(value) {
+  try {
+    const u = new URL(value);
+    if (!isSellerURL(u.href)) return false;
+    const path = u.pathname.replace(/\/+$/, "");
+    return /^\/enhanced-content\/content-manager\/workflow\/ebc-premium\/content\/(?:new|[a-z0-9_-]+)\/edit$/i.test(path);
+  } catch { return false; }
+}
+
+export function safeSellerURL(value) {
+  try {
+    const u = new URL(value);
+    if (!isSellerURL(u.href)) return "URL não autorizada";
+    return `${u.origin}${u.pathname}`;
+  } catch { return "URL inválida"; }
 }
 
 export function makeSlots(options = {}, pageLimits = {}) {
@@ -119,7 +141,8 @@ export function normalizeAndValidate(raw, slots, source = {title: "", descriptio
   const fold = value => String(value || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "")
     .toLowerCase().replace(/[^a-z0-9.,]+/g, " ").trim();
   // Altura, largura, profundidade, comprimento e medidas complementares ficam
-  // em uma única linha. Ex.: 32 × 32 × 10 cm; alças: 52 cm.
+  // em uma única linha, sempre com o significado de cada número visível.
+  // Ex.: 32 cm (largura) x 32 cm (altura) x 10 cm (profundidade).
   const specPairs = slots.filter(slot => slot.role === "name").map(slot => ({
     nameKey: slot.key, valueKey: slot.key.replace(/_name$/, "_value")
   }));
@@ -128,20 +151,42 @@ export function normalizeAndValidate(raw, slots, source = {title: "", descriptio
   if (dimensional.length) {
     const target = dimensional[0];
     const general = dimensional.find(pair => /\b(dimensoes?|medidas?|tamanho)\b/.test(fold(texts[pair.nameKey])));
-    const axes = dimensional.filter(pair => /^(altura|largura|profundidade|comprimento)$/.test(fold(texts[pair.nameKey])));
-    const scalar = axes.map(pair => /^\s*(\d+(?:[.,]\d+)?)\s*(mm|cm|m)\s*$/i.exec(texts[pair.valueKey]));
-    let main = "";
-    const used = new Set();
-    if (general) {
-      main = texts[general.valueKey];
-      used.add(general.nameKey);
-    } else if (axes.length >= 2 && scalar.every(Boolean) && scalar.every(match => match[2].toLowerCase() === scalar[0][2].toLowerCase())) {
-      main = `${scalar.map(match => match[1]).join(" × ")} ${scalar[0][2]}`;
-      axes.forEach(pair => used.add(pair.nameKey));
-    }
-    const extras = dimensional.filter(pair => !used.has(pair.nameKey)).map(pair =>
-      `${texts[pair.nameKey]}: ${texts[pair.valueKey]}`);
-    const combined = [main, ...extras].filter(Boolean).join("; ").slice(0, 500);
+    const components = dimensional.filter(pair => pair !== general);
+    const rank = name => {
+      const value = fold(name);
+      return value.startsWith("largura") ? 1 : value.startsWith("altura") ? 2 : value.startsWith("profundidade") ? 3 :
+        value.startsWith("comprimento") ? 4 : value.startsWith("diametro") ? 5 : value.startsWith("espessura") ? 6 : 20;
+    };
+    const label = value => String(value || "").trim().toLocaleLowerCase("pt-BR");
+    const compact = value => {
+      const sourceValue = String(value || "").trim().replace(/\s*[×]\s*/g, " x ");
+      if (!sourceValue) return "";
+      // Quando o próprio valor já informa os eixos, preserva os rótulos e troca
+      // qualquer separador entre medidas pelo " x " padronizado.
+      const labeled = [...sourceValue.matchAll(/\d+(?:[.,]\d+)?\s*(?:mm|cm|m)?\s*\([^()]{2,80}\)/gi)]
+        .map(match => match[0].trim());
+      if (labeled.length >= 2) return labeled.join(" x ");
+      if (labeled.length === 1) return labeled[0];
+      const chunks = sourceValue.split(/\s*;\s*/).filter(Boolean);
+      const first = chunks.shift() || "";
+      const parts = first.split(/\s*[x×]\s*/i).map(item => item.trim()).filter(Boolean);
+      const scalar = /^\d+(?:[.,]\d+)?\s*(?:mm|cm|m)?$/i;
+      const unit = parts.map(item => /(mm|cm|m)\s*$/i.exec(item)?.[1]).filter(Boolean).at(-1) || "";
+      const neutralLabels = ["primeira medida", "segunda medida", "terceira medida", "quarta medida"];
+      const formatted = parts.length >= 2 && parts.length <= 4 && parts.every(item => scalar.test(item))
+        ? parts.map((item, index) => `${item}${unit && !/(?:mm|cm|m)\s*$/i.test(item) ? ` ${unit}` : ""} (${neutralLabels[index]})`)
+        : [first];
+      for (const extra of chunks) {
+        const match = /^([^:]{2,80}):\s*(.+)$/.exec(extra);
+        formatted.push(match ? `${match[2]} (${label(match[1])})` : extra);
+      }
+      return formatted.join(" x ");
+    };
+    const combinedParts = [];
+    if (general) combinedParts.push(compact(texts[general.valueKey]));
+    combinedParts.push(...components.sort((a, b) => rank(texts[a.nameKey]) - rank(texts[b.nameKey]))
+      .map(pair => `${texts[pair.valueKey]} (${label(texts[pair.nameKey])})`));
+    const combined = combinedParts.filter(Boolean).join(" x ").slice(0, 500);
     dimensional.forEach(pair => { texts[pair.nameKey] = ""; texts[pair.valueKey] = ""; });
     texts[target.nameKey] = "Dimensões";
     texts[target.valueKey] = combined;
@@ -174,7 +219,7 @@ export function normalizeAndValidate(raw, slots, source = {title: "", descriptio
     if (Boolean(texts[s.key]) !== Boolean(texts[other])) issues.push(`${s.key} / ${other}: preencha os dois ou deixe ambos vazios.`);
   }
   // Números no texto que não aparecem na descrição.
-  const digits = text => String(text || "").match(/\b\d+(?:[.,]\d+)?\b/g) || [];
+  const digits = text => String(text || "").match(/(?<!\d)\d+(?:[.,]\d+)?(?!\d)/g) || [];
   const sourceNumbers = new Set(digits(`${source.title || ""} ${source.description || ""}`)
     .map(n => n.replace(",", ".")));
   const seen = new Set();
@@ -280,8 +325,9 @@ ESPECIFICAÇÕES:
 - Preencha todas as informações técnicas comprovadas disponíveis, mesmo que algum dado também apareça na FAQ.
 - A prioridade normal é manter dados técnicos nas especificações. FAQ explica dúvidas; especificações organizam a ficha técnica. Medidas, material, quantidade, cor, modelo, capacidade e indicação de uso podem aparecer nos dois módulos quando forem úteis.
 - Reúna TODAS as medidas em uma única especificação chamada "Dimensões". Nunca crie linhas separadas para altura, largura, profundidade, comprimento, diâmetro, espessura ou alças.
-- Escreva as dimensões de modo compacto, por exemplo "32 × 32 × 10 cm". Medidas complementares entram no mesmo valor, por exemplo "32 × 32 × 10 cm; alças: 52 cm".
-- Nunca repita medidas dentro de outra especificação, como "Design: compacto, 32 × 32 × 10 cm". Nesse caso, use somente "Design: compacto".
+- Cada número deve ser seguido do significado entre parênteses e separado pelo x minúsculo. Formato obrigatório: "32 cm (largura) x 32 cm (altura) x 10 cm (profundidade)".
+- Repita a unidade em cada medida. Medidas complementares entram na mesma linha, por exemplo "52 cm (comprimento das alças)". Se a descrição não identificar os eixos, use rótulos neutros por extenso, como "primeira medida", sem adivinhar altura ou largura.
+- Nunca repita medidas dentro de outra especificação, como "Design: compacto, 32 x 32 x 10 cm". Nesse caso, use somente "Design: compacto".
 - É proibido escrever "Não especificado", "Não informado", "N/A", hífen ou qualquer marcador de ausência.
 - Quando faltarem dados técnicos, use somente campos gerais comprováveis, como "Produto", "Tipo" ou "Indicação de uso", extraídos do título e da descrição. Não invente material, medida, capacidade ou compatibilidade.
 

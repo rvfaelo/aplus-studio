@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>A+ Studio 1.5.5</title>
+  <title>A+ Studio 1.5.3</title>
   <link rel="stylesheet" href="dashboard.css">
   <script type="module" src="dashboard.js"></script>
 </head>
@@ -110,16 +110,24 @@
             <section class="card score-card"><div id="score" class="score">—</div><div><h3>Qualidade do A+</h3><p id="scoreSummary">Valide o projeto para calcular a nota.</p></div></section>
             <section class="card"><h3>Estado do projeto</h3><div id="validationSummary"></div></section>
           </div>
-          <section class="card"><div class="card-head"><h3>Revisão automática</h3><button id="validateProject">Validar novamente</button></div><div id="validationIssues"></div></section>
+          <section class="card">
+            <div class="card-head"><h3>Revisão automática</h3><div class="validation-actions"><button id="validateProject">Validar novamente</button><button id="fixRepetitions" class="primary" hidden>Corrigir repetições com IA</button></div></div>
+            <p id="fixRepetitionsHint" class="muted" hidden>A correção usa a API selecionada e reescreve somente os campos repetidos. Os demais textos permanecem iguais.</p>
+            <div id="validationIssues"></div>
+          </section>
           <section class="card"><h3>Mapa de cobertura</h3><p class="muted">Cada texto mostra sua função no A+. Possíveis repetições são incluídas na nota de variedade.</p><div id="coverageMap"></div></section>
         </div>
 
         <div id="tab-publish" class="tab-panel" hidden>
           <section class="card publish-card">
             <h3>Revisar, aprovar e preencher</h3>
-            <ol><li>Revise todos os textos e informações sinalizadas.</li><li>Valide limites, fatos e especificações.</li><li>Aprove este produto individualmente.</li><li>Clique no botão abaixo. O Studio usará somente o editor A+ Premium na URL canônica configurada; se ela não estiver aberta, será aberta automaticamente.</li></ol>
+            <ol><li>Revise todos os textos e informações sinalizadas.</li><li>Valide limites, fatos e especificações.</li><li>Aprove este produto individualmente.</li><li>Abra a edição A+ no Seller Central em outra aba da mesma janela e espere terminar de carregar. Depois volte ao Studio e clique no botão abaixo.</li></ol>
             <div id="approvalState" class="callout"></div>
-            <div class="action-row"><button id="approveProject">Aprovar conteúdo</button><button id="fillAmazon" class="primary">Preencher aba da Amazon aberta</button></div>
+            <div class="action-row"><button id="approveProject">Aprovar conteúdo</button><button id="diagnoseAmazon">Diagnosticar conexão</button><button id="fillAmazon" class="primary">Preencher aba da Amazon aberta</button></div>
+            <div id="amazonDiagnostic" class="diagnostic-report" hidden aria-live="polite">
+              <div class="diagnostic-head"><div><span class="diagnostic-eyebrow">Diagnóstico A+ Premium</span><h4 id="diagnosticSummary">Aguardando execução</h4><p id="diagnosticRecommendation"></p></div><button id="copyAmazonDiagnostic" type="button">Copiar diagnóstico</button></div>
+              <div id="diagnosticChecks" class="diagnostic-checks"></div>
+            </div>
             <p class="muted">A extensão não salva, envia para análise nem publica o A+. As imagens continuam com upload manual.</p>
           </section>
         </div>

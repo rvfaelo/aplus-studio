@@ -8,6 +8,14 @@ export function normalizeAsins(value, limit = 250) {
   return [...new Set(matches)].slice(0, limit);
 }
 
+export function extractSellerSku(value) {
+  const source = String(value || "").replace(/[\u0000-\u001f\u007f]/g, " ");
+  const match = /(?:^|\s)(?:seller\s+)?sku\s*[:#-]?\s*([a-z0-9][a-z0-9._\/-]{0,99})(?=\s|$)/i.exec(source);
+  if (!match) return "";
+  const sku = match[1].trim();
+  return /^B[0-9A-Z]{9}$/i.test(sku) || /^(?:asin|sku|status)$/i.test(sku) ? "" : sku;
+}
+
 export function classifySellerStatus(value) {
   const text = String(value || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
   if (/rejeitad|reprovad|rejected|declined/.test(text)) return "rejected";
@@ -48,6 +56,13 @@ export function scanSellerCatalogPage() {
   const ignored = /^(editar|excluir|detalhes|estoque|preco|preço|status|asin|sku|imagem|ações|actions)$/i;
   const result = new Map();
   const clean = value => String(value || "").replace(/\s+/g, " ").trim();
+  const parseSku = value => {
+    const source = String(value || "").replace(/[\u0000-\u001f\u007f]/g, " ");
+    const match = /(?:^|\s)(?:seller\s+)?sku\s*[:#-]?\s*([a-z0-9][a-z0-9._\/-]{0,99})(?=\s|$)/i.exec(source);
+    if (!match) return "";
+    const sku = match[1].trim();
+    return /^B[0-9A-Z]{9}$/i.test(sku) || /^(?:asin|sku|status)$/i.test(sku) ? "" : sku;
+  };
   const statusOf = value => {
     const text = clean(value).normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
     if (/rejeitad|reprovad|rejected|declined/.test(text)) return "rejected";
@@ -67,15 +82,28 @@ export function scanSellerCatalogPage() {
     }
     return "";
   };
+  const skuOf = container => {
+    if (!container) return "";
+    for (const node of container.querySelectorAll("[data-sku],[data-testid*='sku' i],[data-column*='sku' i],[class*='sku' i],[id*='sku' i]")) {
+      const attribute = clean(node.getAttribute?.("data-sku"));
+      if (attribute && !/^B[0-9A-Z]{9}$/i.test(attribute)) return attribute.slice(0, 100);
+      const value = clean(node.value || node.innerText || node.textContent);
+      const parsed = parseSku(value);
+      if (parsed) return parsed;
+      if (/^[a-z0-9][a-z0-9._\/-]{0,99}$/i.test(value) && !/^B[0-9A-Z]{9}$/i.test(value) && !/^(?:asin|sku|status)$/i.test(value)) return value;
+    }
+    return parseSku(container.innerText || container.textContent);
+  };
   const add = (asin, node) => {
     asin = String(asin || "").toUpperCase();
     if (!/^B[0-9A-Z]{9}$/.test(asin)) return;
     const container = node?.closest?.("tr,[role='row'],[data-testid*='row' i],[class*='row' i],article,li") || node?.parentElement;
     const context = clean(container?.innerText || container?.textContent || "").slice(0, 4000);
-    const previous = result.get(asin) || {asin, title: "", sellerStatus: "unknown"};
+    const previous = result.get(asin) || {asin, sku: "", title: "", sellerStatus: "unknown"};
+    const sku = skuOf(container) || previous.sku;
     const title = titleOf(container) || previous.title;
     const sellerStatus = statusOf(context);
-    result.set(asin, {asin, title, sellerStatus: sellerStatus === "unknown" ? previous.sellerStatus : sellerStatus});
+    result.set(asin, {asin, sku, title, sellerStatus: sellerStatus === "unknown" ? previous.sellerStatus : sellerStatus});
   };
 
   for (const anchor of document.querySelectorAll("a[href]")) {
