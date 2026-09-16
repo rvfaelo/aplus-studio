@@ -2,7 +2,7 @@
 // Prioriza os data-module-id/data-component-id informados pelo usuário.
 // As heurísticas ficam como fallback para módulos sem esses identificadores.
 (() => {
-  const engineVersion = globalThis.chrome?.runtime?.getManifest?.().version || "1.5.3";
+  const engineVersion = globalThis.chrome?.runtime?.getManifest?.().version || "1.5.13";
   if (globalThis.APlusEngine?.version === engineVersion) return;
   const KAT = 'kat-input,kat-textarea';
   const FIELD = `${KAT},input,textarea,[contenteditable="true"],[contenteditable="plaintext-only"],[role="textbox"]`;
@@ -114,15 +114,21 @@
   }
 
   function amazonType(id) {
-    const patterns = {full: "fullbackground-image", four: "four-column-images", two: "two-column-images", faq: "faq", specs: "tech-specs"};
-    return Object.keys(patterns).find(type => String(id || "").includes(patterns[type])) || null;
+    const t = norm(id);
+    if (/full\s*background\s*image|full\s*width\s*image|full\s*image/.test(t)) return "full";
+    if (/four\s*column\s*images|4\s*column\s*images|four\s*images|4\s*images/.test(t)) return "four";
+    if (/two\s*column\s*images|2\s*column\s*images|two\s*images|2\s*images/.test(t)) return "two";
+    if (/tech\s*specs|technical\s*spec/.test(t)) return "specs";
+    if (/\bfaq\b|faqs|questions\s*answers/.test(t)) return "faq";
+    return null;
   }
 
   function discoverAmazon(access) {
     const modules = [...new Set(access.roots.flatMap(root => Array.from(root.querySelectorAll("[data-module-id]"))))]
       .filter(el => amazonType(el.getAttribute("data-module-id"))).sort(documentOrder);
-    const mapping = new Map(), counts = {}, warnings = [], features = {};
+    const mapping = new Map(), counts = {}, warnings = [], features = {}, moduleCounts = {full: 0, four: 0, two: 0, faq: 0, specs: 0};
     const byType = type => modules.filter(el => amazonType(el.getAttribute("data-module-id")) === type);
+    for (const module of modules) moduleCounts[amazonType(module.getAttribute("data-module-id"))]++;
     const allFull = byType("full");
     // Nunca filtra campos ocultos ANTES de determinar o índice: isso deslocaria os blocos.
     const query = (scope, selector, module) => Array.from(scope.querySelectorAll(selector)).filter(el => moduleHost(el) === module);
@@ -168,7 +174,7 @@
         add(`${type}_${i + 1}_${definition.roles[1]}`, right[i]);
       }
     }
-    return {mapping, counts, warnings, features, types: new Set(modules.map(el => amazonType(el.getAttribute("data-module-id"))))};
+    return {mapping, counts, warnings, features, moduleCounts, types: new Set(modules.map(el => amazonType(el.getAttribute("data-module-id"))))};
   }
 
   function moduleFor(el) {
@@ -243,7 +249,7 @@
     groups.sort((a, b) => documentOrder(a.el, b.el));
     const mapping = amazon.mapping, warnings = amazon.warnings;
     const full = groups.filter(g => g.type === "full");
-    const counts = amazon.counts;
+    const counts = amazon.counts, moduleCounts = {...amazon.moduleCounts};
     for (const g of groups) {
       const sameType = groups.filter(x => x.type === g.type);
       if (g.type !== "full" && sameType.length !== 1) { warnings.push(`Há mais de um módulo do tipo ${g.type}. Use Mapear campos.`); continue; }
@@ -259,6 +265,7 @@
       if (!expected || left.length !== expected || right.length !== expected || g.fields.some(d => !d.role)) {
         warnings.push(`Módulo ${prefix}: quantidade ou rótulos ambíguos. Abra todos os campos ou use Mapear campos.`); continue;
       }
+      moduleCounts[g.type] = Math.max(moduleCounts[g.type] || 0, g.type === "full" ? full.length : sameType.length);
       if (g.type === "faq" || g.type === "specs") counts[g.type] = expected;
       for (let i = 0; i < expected; i++) {
         const base = g.type === "full" ? prefix : `${prefix}_${i + 1}`;
@@ -266,15 +273,18 @@
       }
     }
     if (access.blockedFrames) warnings.push("Há iframe de outra origem. Seu conteúdo não pode ser inspecionado por esta extensão.");
-    return {mapping, descriptors, counts, features: amazon.features, warnings: [...new Set(warnings)]};
+    return {mapping, descriptors, counts, features: amazon.features, moduleCounts, warnings: [...new Set(warnings)]};
   }
 
   function read(el) {
-    if (el.matches(KAT)) return String(el.value ?? el.getAttribute("value") ?? "");
+    if (el.matches(KAT)) {
+      const inner = el.shadowRoot?.querySelector("input,textarea") || el.querySelector?.("input,textarea");
+      return String(inner?.value ?? el.value ?? el.getAttribute("value") ?? "");
+    }
     return el.matches("input,textarea") ? el.value : el.innerText ?? el.textContent ?? "";
   }
 
-  async function writeAmazon(el, value) {
+  async function writeAmazon(el, value, writeToken) {
     // O setter customizado pertence ao MAIN world. O worker executa somente a função
     // de escrita empacotada, no documento de origem, sem chave nem acesso à API.
     const marker = crypto.randomUUID(), attribute = "data-aplus-field-token";
@@ -282,8 +292,12 @@
     const expectedBefore = read(el);
     el.setAttribute(attribute, marker);
     try {
-      const reply = await chrome.runtime.sendMessage({channel: "aplus-native-write", marker, value, expectedBefore, href: location.href});
-      return !!reply?.ok && !!reply.data?.written;
+      const reply = await chrome.runtime.sendMessage({channel: "aplus-native-write", marker, value, expectedBefore,
+        href: location.href, writeToken});
+      if (!reply?.ok) return {written: false, method: "main-world", reason: reply?.error || "ponte de escrita recusada",
+        code: reply?.code || "BRIDGE_REJECTED", diagnostic: reply?.diagnostic || null};
+      return reply.data || {written: false, method: "main-world", reason: "resultado de escrita ausente",
+        code: "BRIDGE_RESULT_MISSING"};
     } finally {
       if (el.getAttribute(attribute) === marker) {
         if (oldMarker === null) el.removeAttribute(attribute); else el.setAttribute(attribute, oldMarker);
@@ -291,9 +305,9 @@
     }
   }
 
-  async function write(el, value) {
+  async function write(el, value, writeToken = "") {
     if (!visible(el)) return false;
-    if (el.matches(`${KAT},.public-DraftEditor-content[contenteditable="true"]`)) return writeAmazon(el, value);
+    if (el.matches(`${KAT},.public-DraftEditor-content[contenteditable="true"]`)) return writeAmazon(el, value, writeToken);
     const view = el.ownerDocument.defaultView;
     el.focus({preventScroll: true});
     const before = new view.InputEvent("beforeinput", {bubbles: true, composed: true, cancelable: true, inputType: "insertText", data: value});

@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "A+ Studio | Planejar, Gerar e Auditar",
-  "version": "1.5.3",
-  "description": "Organiza projetos por ASIN, gera rascunhos em massa, revisa, valida, aprova e preenche conteúdo A+.",
+  "version": "1.5.13",
+  "description": "Cria conteúdo A+ e, em área separada, analisa avaliações e otimiza anúncios da Amazon.",
   "icons": {
     "16": "icons/icon16.png",
     "32": "icons/icon32.png",
@@ -12,6 +12,7 @@
   "minimum_chrome_version": "120",
   "permissions": ["activeTab", "scripting", "storage", "tabs"],
   "host_permissions": [
+    "https://api.openai.com/*",
     "https://api.groq.com/*",
     "https://generativelanguage.googleapis.com/*",
     "https://kiraai.vn/*",
@@ -70,7 +71,7 @@
         "https://sellercentral.amazon.com.tr/*",
         "https://sellercentral.amazon.co.za/*"
       ],
-      "js": ["content-engine.js", "content.js"],
+      "js": ["module-automation.js", "content-engine.js", "content.js"],
       "run_at": "document_idle"
     }
   ],
@@ -85,6 +86,6 @@
     }
   },
   "content_security_policy": {
-    "extension_pages": "script-src 'self'; object-src 'none'; connect-src https://api.groq.com https://generativelanguage.googleapis.com https://kiraai.vn https://api.deepseek.com https://www.amazon.com.br"
+    "extension_pages": "script-src 'self'; object-src 'none'; connect-src https://api.openai.com https://api.groq.com https://generativelanguage.googleapis.com https://kiraai.vn https://api.deepseek.com https://www.amazon.com.br"
   }
 }

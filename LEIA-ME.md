@@ -1,6 +1,93 @@
 # A+ Studio
 
-Versão 1.5.3. Extensão Chrome Manifest V3 para organizar, planejar, gerar, revisar, aprovar, preencher e auditar conteúdo Amazon A+ com roteamento econômico entre KiraAI, Gemini, Groq e DeepSeek.
+Versão 1.5.13. Extensão Chrome Manifest V3 para organizar, planejar, gerar, revisar, aprovar, montar, preencher e auditar conteúdo Amazon A+, além de analisar avaliações e otimizar anúncios em uma área independente. Usa roteamento entre OpenAI, KiraAI, Gemini, Groq e DeepSeek.
+
+### Montagem automática 1.5.13
+
+- O botão “Preparar módulos / preencher textos” monta a sequência padrão quando a página está vazia ou contém um prefixo correto.
+- A ordem é: Imagem completa, Quatro imagens, Duas imagens, FAQ, Imagem completa e Especificações.
+- O FAQ é completado até 5 perguntas e as especificações até 6 linhas.
+- Se a estrutura existente estiver fora da ordem, a extensão para sem excluir, mover ou duplicar módulos.
+- Depois da montagem, revise a página e clique novamente para preencher os textos.
+
+### Registro da montagem manual (suporte)
+
+- Novo botão **Registrar montagem manual** na etapa Preencher.
+- O usuário adiciona uma vez, na ordem, Imagem completa, Quatro imagens, Duas imagens, FAQ, Imagem completa e Especificações.
+- O gravador registra somente os controles clicados, os controles visíveis após cada ação, a evolução das contagens e o estado de carregamento.
+- O relatório pode ser finalizado, retomado após reabrir o Studio e copiado para desenvolver a adição automática com base no editor real da conta.
+- Senhas, cookies, API Keys e valores de campos de texto não são registrados; e-mails, ASINs e números longos são removidos dos rótulos.
+
+### Relatório técnico e teste seguro da ponte 1.5.11
+
+- **Diagnosticar conexão** agora valida a mesma ponte usada para preencher, sem alterar nenhum campo da Amazon.
+- Cada tentativa recebe um ID próprio, horários, duração, versão do conector, estado do documento e resumo por código de erro.
+- As falhas distinguem autorização ausente, divergente ou expirada, aba incorreta, iframe, documento ausente, timeout, erro de execução, recusa de KAT/Draft.js e texto revertido pela Amazon.
+- O resultado destaca a causa dominante e mostra o código em cada campo, além do método de escrita que foi tentado.
+- **Copiar diagnóstico técnico** e **Copiar relatório técnico** geram dados prontos para suporte, sem API Keys, token de autorização nem textos completos do produto.
+
+### Autorização de escrita resiliente 1.5.10
+
+- Corrige a falha em massa `Escrita fora da operação ou do documento ativo`.
+- A autorização temporária de preenchimento passa a sobreviver à reinicialização do service worker do Chrome, sem deixar de ser vinculada à aba e ao documento corretos.
+- A autorização usa um token aleatório com validade curta e é removida ao concluir ou cancelar a tentativa.
+- O título fixo do módulo de especificações é preenchido mesmo em projetos antigos que o salvaram vazio.
+- Cada caixa do editor de textos possui um ícone para copiar rapidamente seu conteúdo.
+
+### Recuperação de preenchimento 1.5.9
+
+- O diagnóstico continua lendo campos e módulos enquanto uma tentativa real está em andamento; ele não mostra mais `0/38` apenas por causa do bloqueio interno.
+- O relatório informa o campo atual, o progresso e há quanto tempo a tentativa está executando.
+- Uma operação sem progresso por 30 segundos é considerada abandonada e liberada automaticamente.
+- Cada escrita de campo tem limite de 12 segundos e o preenchimento completo é cancelado depois de 3 minutos, evitando travas permanentes.
+- O botão de preenchimento mostra `Preenchendo…` e impede um segundo clique ou diagnóstico concorrente no mesmo painel.
+- `Bullets atuais` foi renomeado para `Tópicos em destaque atuais (bullets)` e explicado na própria tela.
+
+### Avaliações e anúncio 1.5.8
+
+- O seletor superior separa `A+ Content` de `Avaliações e anúncio`.
+- `Amazon Review Analyzer` recebe avaliações e motivos internos de devolução, agrupando reclamações, expectativa incorreta, tamanho/compatibilidade e alertas de segurança.
+- É possível abrir a página de avaliações e capturar somente os comentários visíveis, inclusive em páginas seguintes, sem fazer coleta automática em segundo plano.
+- Avaliações de concorrentes podem ser adicionadas separadamente para comparação opcional.
+- `Amazon Listing Optimization` gera título, cinco bullets, descrição e termos de busca prontos para revisão.
+- Palavras-chave prioritárias podem ser informadas; quando ausentes, o sistema não inventa volume de busca.
+- O otimizador pode usar automaticamente o diagnóstico das avaliações.
+- Alterações nessa área não removem a aprovação do conteúdo A+ e nunca são enviadas automaticamente à Amazon.
+
+### Prompts de imagem e OpenAI 1.5.7
+
+- Quando houver mais de uma variação confirmada, o Banner principal e o Banner final mostram todas as variações juntas. A regra é incluída nos briefings individuais e no prompt completo.
+- Pessoas entram somente quando ajudam a demonstrar o benefício. Em produtos de uso amplo, os prompts distribuem homens e mulheres entre contextos diferentes; a alternância não é forçada quando não combina com a categoria ou a estratégia.
+- OpenAI API oficial adicionada com GPT-5.6 Luna, Terra e Sol. O modo automático econômico usa Luna quando uma chave OpenAI estiver configurada.
+- Toda chave nova precisa passar pelo botão **Testar chave** antes de ser salva. O teste consulta os modelos liberados sem gerar conteúdo.
+- A chave da OpenAI deve ser criada na plataforma de API e ter faturamento próprio. ChatGPT Plus não inclui créditos de API.
+
+### Correção de preenchimento 1.5.6
+
+- O preenchimento redescobre um campo quando a Amazon recria o módulo depois de uma alteração, em vez de continuar usando uma referência antiga.
+- A confirmação final procura o elemento atual de cada campo. Um campo recriado não é mais marcado como falha somente porque o elemento original foi removido.
+- Componentes KAT recebem três estratégias controladas: propriedade do host, input interno no Shadow DOM e handler de mudança do React.
+- Draft.js informa qual estratégia confirmou a escrita e retorna um motivo específico quando todas falham.
+- O Studio guarda o relatório da última tentativa, com falhas por campo, método, campos recriados e novas tentativas. O relatório pode ser copiado.
+- O botão de preenchimento destaca tentativa sem nenhum campo confirmado ou preenchimento parcial.
+
+### Estratégia de venda 1.5.5
+
+- A geração usa automaticamente uma biblioteca de ângulos de venda. Banner principal, quatro imagens, duas imagens, FAQ, fechamento e especificações recebem funções diferentes para reduzir repetição e aumentar persuasão.
+- Antes de escrever, o prompt identifica comprador provável, momento de uso, dor, desejo emocional e objeção. Esses elementos orientam a linguagem, mas nunca são tratados como fatos do produto.
+- A opção padrão é **Automática recomendada**. Também há ajustes opcionais: mais emocional, prática, técnica, premium, segura/conservadora ou personalizada.
+- O modelo do produto é detectado entre infantil, pet, eletrônicos, moda, saúde, ferramentas, esporte, automotivo, viagem, beleza, casa e produto geral. A escolha manual continua disponível para casos fora do padrão.
+- O checklist da categoria mostra somente informações encontradas e ausentes. Um botão envia os campos ausentes para a Ficha factual, sem preencher ou inventar os valores.
+- Produtos infantis e de saúde têm prioridade quando também pertencem a um contexto secundário, como viagem, para manter os cuidados mais importantes.
+- A mesma estratégia orienta textos e briefings de imagem. O prompt completo das imagens inclui direção de venda, cliente e desejo, mantendo as imagens sem texto.
+
+### Correções 1.5.4
+
+- O diagnóstico considera projetos aprovados mesmo quando o status já está como **Preenchido**, evitando o falso aviso “necessário aprovar”.
+- **Preencher aba da Amazon aberta** permite reaplicar um projeto aprovado depois de uma rodada anterior.
+- A detecção de estrutura conta módulos reais da página, espera a Amazon estabilizar e não depende de IDs únicos repetidos.
+- As mensagens do diagnóstico deixam de sugerir “expandir” quando a Amazon não oferece expandir/contrair.
+- A lista Groq inclui GPT-OSS 20B/120B, Qwen3.6/Qwen3.8 27B, Llama 3.1 8B Instant e Llama 3.3 70B Versatile; o campo **Outro modelo** continua disponível para IDs da sua conta.
 
 ### Correção da revisão 1.5.3
 
@@ -47,7 +134,7 @@ Versão 1.5.3. Extensão Chrome Manifest V3 para organizar, planejar, gerar, rev
 - Quatro servidores independentes: Google Gemini, KiraAI.vn, Groq e DeepSeek.
 - KiraAI configurado com os identificadores atuais `qwen3.8-flash` e `glm-5.3-free`.
 - DeepSeek configurado com a API oficial e o modelo `deepseek-flash`; por ser cobrado por uso, fica por último no modo automático.
-- Todas as quatro chaves podem permanecer salvas simultaneamente, inclusive em cópias criptografadas no Chrome Sync.
+- Todas as cinco chaves podem permanecer salvas simultaneamente, inclusive em cópias criptografadas no Chrome Sync.
 - O modo automático prioriza o GLM gratuito e alternativas econômicas; se uma rota falhar ou atingir o limite, passa para a próxima chave configurada.
 
 ### Ajustes 1.3.0
@@ -94,7 +181,7 @@ Os conceitos de diagnóstico, característica-benefício e briefing visual foram
 
 ## Instalar como nova extensão
 
-1. Extraia o ZIP em uma pasta nova e definitiva, por exemplo `Aplus-Studio-1.5.3`.
+1. Extraia o ZIP em uma pasta nova e definitiva, por exemplo `Aplus-Studio-1.5.13`.
 2. Abra `chrome://extensions` no Chrome.
 3. Ative **Modo do desenvolvedor**.
 4. Clique em **Carregar sem compactação**.

@@ -1,4 +1,5 @@
 import {makeSlots, normalizeAndValidate} from "./shared.js";
+import {normalizeListingWorkspace} from "./listing-intelligence.js";
 
 export const PROJECT_STATUS = Object.freeze({
   new: "Novo", queued: "Na fila", generating: "Gerando", review: "Em revisão",
@@ -23,11 +24,15 @@ export function createProject(input = {}, now = Date.now()) {
   return {
     id, asin: normalizeAsin(input.asin), title: clean(input.title, 1000), description: clean(input.description),
     facts, config: {model: clean(input.config?.model, 100) || "openai/gpt-oss-20b",
-      faqCount: Number(input.config?.faqCount) || 5, specCount: Number(input.config?.specCount) || 6},
+      faqCount: Number(input.config?.faqCount) || 5, specCount: Number(input.config?.specCount) || 6,
+      strategyMode: clean(input.config?.strategyMode, 40) || "auto",
+      templateMode: clean(input.config?.templateMode, 40) || "auto",
+      customStrategy: clean(input.config?.customStrategy, 800)},
     slots: Array.isArray(input.slots) ? input.slots : [], texts: input.texts && typeof input.texts === "object" ? input.texts : {},
     notes: Array.isArray(input.notes) ? input.notes.slice(0, 30).map(item => clean(item, 700)) : [],
     validationWarnings: Array.isArray(input.validationWarnings) ? input.validationWarnings.slice(0, 50).map(item => clean(item, 1000)) : [],
-    plan: input.plan || null, quality: input.quality || null, approved: Boolean(input.approved),
+    plan: input.plan || null, quality: input.quality || null, fillReport: input.fillReport || null,
+    listing: normalizeListingWorkspace(input.listing), approved: Boolean(input.approved),
     status: PROJECT_STATUS[input.status] ? input.status : "new", error: clean(input.error, 1000),
     createdAt: Number(input.createdAt) || now, updatedAt: Number(input.updatedAt) || now
   };

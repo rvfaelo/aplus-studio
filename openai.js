@@ -3,6 +3,7 @@ import {errorDiagnostic} from "./diagnostics.js";
 import {providerForModel, modelForRequest} from "./providers.js";
 
 const OPENAI_ENDPOINTS = Object.freeze({
+  openai: "https://api.openai.com/v1/chat/completions",
   groq: "https://api.groq.com/openai/v1/chat/completions",
   kira: "https://kiraai.vn/api/v1/chat/completions",
   deepseek: "https://api.deepseek.com/chat/completions"
@@ -55,12 +56,47 @@ function readRateLimit(response) {
 }
 
 function reasoningEffortFor(model) {
-  return /^openai\/gpt-oss/.test(model) ? "low" : undefined;
+  return /^(?:openai\/gpt-oss|openai-api\/gpt-)/.test(model) ? "low" : undefined;
 }
 
 function isGemini(model) { return String(model).startsWith("gemini/"); }
 function geminiModel(model) { return String(model).replace(/^gemini\//, ""); }
 function outputBudget(slots) { return Math.min(INITIAL_OUTPUT_TOKENS, Math.max(700, Math.ceil(slots.reduce((n,s)=>n+s.limit,0)/4)+350)); }
+
+const MODEL_LIST_ENDPOINTS = Object.freeze({
+  openai: "https://api.openai.com/v1/models",
+  groq: "https://api.groq.com/openai/v1/models",
+  kira: "https://kiraai.vn/api/v1/models",
+  deepseek: "https://api.deepseek.com/models",
+  gemini: "https://generativelanguage.googleapis.com/v1beta/models"
+});
+
+// Valida autenticação sem gerar conteúdo nem consumir tokens. A listagem também
+// permite avisar quando o modelo padrão do provedor não está liberado na conta.
+export async function testApiKey({apiKey, model, fetcher = fetch}) {
+  const key = String(apiKey || "").trim();
+  const provider = providerForModel(model);
+  if (!key || key.length < 20 || key.length > 1000 || /\s/.test(key)) throw new Error("Cole uma API Key válida, sem espaços.");
+  if (provider === "auto" || !MODEL_LIST_ENDPOINTS[provider]) throw new Error("Selecione um provedor para testar a chave.");
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 20000);
+  try {
+    const headers = provider === "gemini" ? {"x-goog-api-key": key} : {Authorization: `Bearer ${key}`};
+    const response = await fetcher(MODEL_LIST_ENDPOINTS[provider], {method: "GET", credentials: "omit", redirect: "error", headers, signal: controller.signal});
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw apiFailure(response.status, payload, {model, secrets: [key], event: "key_test"});
+    const requested = modelForRequest(model);
+    const models = provider === "gemini"
+      ? (payload.models || []).map(item => String(item?.name || "").replace(/^models\//, ""))
+      : (payload.data || []).map(item => String(item?.id || ""));
+    const modelAvailable = !models.length || models.includes(requested);
+    return {valid: true, provider, model: requested, modelAvailable, modelCount: models.length};
+  } catch (error) {
+    if (controller.signal.aborted) throw new Error("O teste da chave demorou mais de 20 segundos. Confira a conexão e tente novamente.");
+    if (error instanceof TypeError) throw new Error("Não foi possível conectar ao provedor para testar a chave.");
+    throw error;
+  } finally { clearTimeout(timer); }
+}
 
 function apiFailure(status, payload, context = {}) {
   const diagnostic = errorDiagnostic(payload, {...context, httpStatus: context.httpStatus ?? status});
@@ -222,7 +258,9 @@ async function request({apiKey, model, input, instructions, signal, onProgress, 
 
     const provider=providerForModel(model);
     const requestModel=modelForRequest(model);
-    const body = {model:requestModel, messages, stream: true, temperature: 0.4, max_tokens: maxOutputTokens};
+    const body = provider === "openai"
+      ? {model:requestModel, messages, stream: true, max_completion_tokens: maxOutputTokens}
+      : {model:requestModel, messages, stream: true, temperature: 0.4, max_tokens: maxOutputTokens};
     // KiraAI é compatível com o formato OpenAI, mas alguns modelos gratuitos
     // não anunciam suporte a response_format. O prompt ainda exige JSON e a
     // resposta é validada localmente antes de preencher qualquer campo.
@@ -282,9 +320,9 @@ async function request({apiKey, model, input, instructions, signal, onProgress, 
   }
 }
 
-export async function generateTexts({apiKey, title, description, model, slots, signal, revisionPrompt = "", onStage = () => {}, onRateLimit = () => {}, fetcher = fetch}) {
+export async function generateTexts({apiKey, title, description, model, slots, strategy = null, signal, revisionPrompt = "", onStage = () => {}, onRateLimit = () => {}, fetcher = fetch}) {
   const source = JSON.stringify({titulo: title, descricao: description});
-  let activeSlots=slots, instructions = generationInstructions(activeSlots), preserved=null;
+  let activeSlots=slots, instructions = generationInstructions(activeSlots, strategy), preserved=null;
   let input = [{role: "user", content: source}];
   if (revisionPrompt) input.push({role: "user", content: String(revisionPrompt).slice(0, 30000)});
   let maxOutputTokens = outputBudget(activeSlots);
@@ -362,7 +400,7 @@ export async function generateTexts({apiKey, title, description, model, slots, s
     activeSlots=slots.filter(slot=>affected.has(slot.key));
     if(!activeSlots.length)activeSlots=slots;
     preserved=Object.fromEntries(Object.entries(validated.texts).filter(([key])=>!affected.has(key)));
-    instructions=generationInstructions(activeSlots);
+    instructions=generationInstructions(activeSlots, strategy);
     maxOutputTokens=outputBudget(activeSlots);
     stage = `Corrigindo apenas ${activeSlots.length} campo(s) com problema…`;
     input = [
@@ -379,11 +417,13 @@ export async function generateTexts({apiKey, title, description, model, slots, s
 // Geração JSON genérica usada pelo planejamento. Mantém as mesmas proteções,
 // diagnóstico sanitizado, cancelamento e recuperação do fluxo principal.
 export async function generateStructured({apiKey, title, description, model, instructions, signal,
-  validate = raw => ({value: raw, issues: []}), onStage = () => {}, onRateLimit = () => {}, fetcher = fetch}) {
+  validate = raw => ({value: raw, issues: []}), onStage = () => {}, onRateLimit = () => {}, fetcher = fetch,
+  initialStage = "Analisando o produto e criando o planejamento…", initialOutputTokens = INITIAL_OUTPUT_TOKENS}) {
   const source = JSON.stringify({titulo: title, descricao: description});
   let input = [{role: "user", content: source}], strictJson = true;
-  let maxOutputTokens = INITIAL_OUTPUT_TOKENS, rateLimitRetry = false, jsonRetry = false, tokenRetry = false, serverRetry = false;
-  let stage = "Analisando o produto e criando o planejamento…";
+  let maxOutputTokens = Math.max(700, Math.min(Number(initialOutputTokens) || INITIAL_OUTPUT_TOKENS, RECOVERY_OUTPUT_TOKENS));
+  let rateLimitRetry = false, jsonRetry = false, tokenRetry = false, serverRetry = false;
+  let stage = initialStage;
   for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
     if (signal?.aborted) throw new Error("Operação cancelada.");
     onStage(stage);

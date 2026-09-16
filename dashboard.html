@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>A+ Studio 1.5.3</title>
+  <title>A+ Studio 1.5.13</title>
   <link rel="stylesheet" href="dashboard.css">
   <script type="module" src="dashboard.js"></script>
 </head>
@@ -13,6 +13,10 @@
       <div class="logo" aria-hidden="true">A+</div>
       <div><h1>A+ Studio</h1><p>Produção, revisão e preenchimento</p></div>
     </div>
+    <nav class="app-switcher" aria-label="Áreas da extensão">
+      <button type="button" data-workspace="aplus" class="active">A+ Content</button>
+      <button type="button" data-workspace="listing">Avaliações e anúncio</button>
+    </nav>
     <div class="topbar-actions">
       <div id="jobStatus" class="job-status"><span class="status-indicator" aria-hidden="true"></span>Pronto</div>
       <button id="apiSettings" class="button-with-icon"><span aria-hidden="true">◆</span> Chaves de API</button>
@@ -83,11 +87,25 @@
           <section class="card options-card">
             <h3>Configuração</h3>
             <div class="grid three">
-              <label>Modelo<select id="model"><option value="auto/economico">Automático econômico</option><option value="divider-kira" disabled>── KiraAI ──</option><option value="kira/qwen3.8-flash">Qwen 3.8 Flash (KiraAI)</option><option value="kira/glm-5.3-free">GLM 5.3 Free (KiraAI)</option><option value="divider-gemini" disabled>── Google Gemini ──</option><option value="gemini/gemini-3.5-flash">Gemini 3.5 Flash</option><option value="gemini/gemini-3.5-flash-lite">Gemini 3.5 Flash-Lite</option><option value="divider-groq" disabled>── Groq ──</option><option value="openai/gpt-oss-20b">GPT-OSS 20B (Groq)</option><option value="openai/gpt-oss-120b">GPT-OSS 120B (Groq)</option><option value="qwen/qwen3.8-27b">Qwen 3.8 27B (Groq)</option><option value="divider-deepseek" disabled>── DeepSeek ──</option><option value="deepseek/deepseek-flash">DeepSeek Flash (API oficial, paga)</option></select></label>
+              <label>Modelo<select id="model"><option value="auto/economico">Automático econômico</option><option value="divider-openai" disabled>── OpenAI API oficial ──</option><option value="openai-api/gpt-5.6-luna">GPT-5.6 Luna (econômico e estável)</option><option value="openai-api/gpt-5.6-terra">GPT-5.6 Terra (mais qualidade)</option><option value="openai-api/gpt-5.6-sol">GPT-5.6 Sol (qualidade máxima)</option><option value="divider-kira" disabled>── KiraAI ──</option><option value="kira/qwen3.8-flash">Qwen 3.8 Flash (KiraAI)</option><option value="kira/glm-5.3-free">GLM 5.3 Free (KiraAI)</option><option value="divider-gemini" disabled>── Google Gemini ──</option><option value="gemini/gemini-3.5-flash">Gemini 3.5 Flash</option><option value="gemini/gemini-3.5-flash-lite">Gemini 3.5 Flash-Lite</option><option value="divider-groq" disabled>── Groq ──</option><option value="openai/gpt-oss-20b">GPT-OSS 20B (Groq)</option><option value="openai/gpt-oss-120b">GPT-OSS 120B (Groq)</option><option value="qwen/qwen3.8-27b">Qwen 3.8 27B (Groq)</option><option value="qwen/qwen3.6-27b">Qwen 3.6 27B (Groq)</option><option value="llama-3.1-8b-instant">Llama 3.1 8B Instant (Groq)</option><option value="llama-3.3-70b-versatile">Llama 3.3 70B Versatile (Groq)</option><option value="divider-deepseek" disabled>── DeepSeek ──</option><option value="deepseek/deepseek-flash">DeepSeek Flash (API oficial, paga)</option></select></label>
               <label>FAQ<input id="faqCount" type="number" min="1" max="6" value="5"></label>
               <label>Especificações<input id="specCount" type="number" min="1" max="15" value="6"></label>
             </div>
+            <div class="grid strategy-controls">
+              <label>Estratégia de venda<select id="strategyMode"><option value="auto">Automática recomendada</option><option value="emotional">Mais emocional</option><option value="practical">Mais prática</option><option value="technical">Mais técnica</option><option value="premium">Mais premium</option><option value="conservative">Mais segura e conservadora</option><option value="custom">Personalizada</option></select></label>
+              <label>Modelo de produto<select id="templateMode"><option value="auto">Detectar automaticamente</option><option value="infantil">Infantil e bebê</option><option value="pet">Pet</option><option value="eletronico">Eletrônicos e informática</option><option value="moda">Moda e acessórios</option><option value="saude">Saúde e suplementos</option><option value="ferramenta">Ferramentas e uso profissional</option><option value="esporte">Esporte e fitness</option><option value="automotivo">Automotivo</option><option value="viagem">Viagem e portáteis</option><option value="beleza">Beleza e cuidados pessoais</option><option value="casa">Casa, organização e decoração</option><option value="generic">Produto geral</option></select></label>
+              <label id="customStrategyWrap" hidden>Direção personalizada<input id="customStrategy" maxlength="800" placeholder="Ex.: enfatizar presente, acabamento e ocasião de uso"></label>
+            </div>
             <div class="action-row"><button id="createPlan">Criar planejamento + textos A+</button><button id="generateDraft" class="primary">Gerar somente textos A+</button></div>
+          </section>
+          <section class="card strategy-card">
+            <div class="card-head"><div><h3>Estratégia automática de venda</h3><p>A extensão transforma os dados do produto em ângulos diferentes para cada módulo.</p></div><button id="addMissingFacts" type="button">Adicionar campos ausentes</button></div>
+            <div id="strategySummary" class="strategy-summary"></div>
+            <div class="strategy-layout">
+              <div><h4>Leitura do cliente</h4><div id="strategyInsights" class="strategy-insights"></div></div>
+              <div><h4>Checklist da categoria</h4><div id="categoryChecklist" class="category-checklist"></div></div>
+            </div>
+            <details class="strategy-angles"><summary>Ver ângulo de cada módulo</summary><div id="strategyAngles"></div></details>
           </section>
         </div>
 
@@ -123,13 +141,82 @@
             <h3>Revisar, aprovar e preencher</h3>
             <ol><li>Revise todos os textos e informações sinalizadas.</li><li>Valide limites, fatos e especificações.</li><li>Aprove este produto individualmente.</li><li>Abra a edição A+ no Seller Central em outra aba da mesma janela e espere terminar de carregar. Depois volte ao Studio e clique no botão abaixo.</li></ol>
             <div id="approvalState" class="callout"></div>
-            <div class="action-row"><button id="approveProject">Aprovar conteúdo</button><button id="diagnoseAmazon">Diagnosticar conexão</button><button id="fillAmazon" class="primary">Preencher aba da Amazon aberta</button></div>
+            <div class="action-row"><button id="approveProject">Aprovar conteúdo</button><button id="diagnoseAmazon">Diagnosticar conexão</button><button id="recordModules">Registrar montagem (suporte)</button><button id="fillAmazon" class="primary">Preparar módulos / preencher textos</button></div>
+            <div id="moduleRecorder" class="diagnostic-report" hidden aria-live="polite">
+              <div class="diagnostic-head"><div><span class="diagnostic-eyebrow">Mapeamento dos módulos da Amazon</span><h4 id="moduleRecorderSummary">Aguardando início</h4><p id="moduleRecorderDetail"></p></div><div class="action-row"><button id="finishModuleRecording" type="button">Finalizar registro</button><button id="copyModuleRecording" type="button">Copiar relatório de montagem</button></div></div>
+              <p class="muted">Use este registro apenas se a Amazon mudar a interface. Sequência observada: Imagem completa, Quatro imagens, Duas imagens, FAQ, Imagem completa e Especificações. Ele guarda ações de módulo e mudanças estruturais; cliques de rolagem, foco e fundo são ignorados.</p>
+            </div>
             <div id="amazonDiagnostic" class="diagnostic-report" hidden aria-live="polite">
-              <div class="diagnostic-head"><div><span class="diagnostic-eyebrow">Diagnóstico A+ Premium</span><h4 id="diagnosticSummary">Aguardando execução</h4><p id="diagnosticRecommendation"></p></div><button id="copyAmazonDiagnostic" type="button">Copiar diagnóstico</button></div>
+              <div class="diagnostic-head"><div><span class="diagnostic-eyebrow">Diagnóstico A+ Premium</span><h4 id="diagnosticSummary">Aguardando execução</h4><p id="diagnosticRecommendation"></p></div><button id="copyAmazonDiagnostic" type="button">Copiar diagnóstico técnico</button></div>
               <div id="diagnosticChecks" class="diagnostic-checks"></div>
+            </div>
+            <div id="fillResult" class="fill-result" hidden aria-live="polite">
+              <div class="diagnostic-head"><div><span class="diagnostic-eyebrow">Última tentativa de preenchimento</span><h4 id="fillResultSummary"></h4><p id="fillResultDetail"></p></div><button id="copyFillResult" type="button">Copiar relatório técnico</button></div>
+              <div id="fillResultRows" class="fill-result-rows"></div>
             </div>
             <p class="muted">A extensão não salva, envia para análise nem publica o A+. As imagens continuam com upload manual.</p>
           </section>
+        </div>
+      </section>
+
+      <section id="listingWorkspace" class="listing-workspace" hidden>
+        <div class="project-header intelligence-header">
+          <div><span class="pill intelligence-pill">Ferramentas separadas do A+</span><h2 id="listingProductName">Produto sem título</h2><p id="listingProductMeta"></p></div>
+          <div class="intelligence-model"><label for="listingModel">Modelo de IA</label><select id="listingModel"></select></div>
+        </div>
+
+        <div class="intelligence-callout">
+          <strong>Esta área não altera, aprova nem preenche o conteúdo A+</strong>
+          <p>As avaliações, diagnósticos e versões do anúncio ficam salvos no produto selecionado, mas funcionam como documentos independentes.</p>
+        </div>
+
+        <nav class="tool-tabs" aria-label="Ferramentas do anúncio">
+          <button type="button" data-intel-tool="reviews" class="active">Analisar avaliações</button>
+          <button type="button" data-intel-tool="optimizer">Otimizar anúncio</button>
+        </nav>
+
+        <div id="intel-reviews" class="intelligence-panel">
+          <div class="grid intelligence-input-grid">
+            <section class="card">
+              <div class="card-title-row"><span class="section-icon" aria-hidden="true">◎</span><div><h3>Amazon Review Analyzer</h3><p>Encontra reclamações recorrentes, expectativa incorreta, problemas de tamanho e possíveis gatilhos de devolução.</p></div></div>
+              <label for="reviewInput">Avaliações dos clientes</label>
+              <textarea id="reviewInput" rows="16" maxlength="60000" placeholder="Cole as avaliações. De preferência, separe cada comentário por uma linha em branco."></textarea>
+              <div class="field-meta"><span id="reviewSampleCount">Nenhuma avaliação identificada</span><span>Até 60.000 caracteres</span></div>
+              <div class="inline review-capture-actions"><button id="openReviews" type="button">Abrir avaliações na Amazon</button><button id="captureReviews" type="button" disabled>Capturar avaliações visíveis</button></div>
+              <p class="muted">A captura lê somente a página aberta. Para coletar outra página, avance na Amazon e clique em capturar novamente.</p>
+              <details class="optional-input"><summary>Adicionar avaliações de concorrentes (opcional)</summary><label for="competitorReviewInput">Identifique o concorrente antes de cada grupo</label><textarea id="competitorReviewInput" rows="7" maxlength="30000" placeholder="Concorrente A / ASIN: ...&#10;&#10;Avaliações..."></textarea></details>
+              <label for="returnNotes">Motivos de devolução e observações internas</label>
+              <textarea id="returnNotes" rows="6" maxlength="12000" placeholder="Ex.: clientes esperam estrutura firme, mas o produto é uma almofada macia."></textarea>
+              <div class="action-row"><button id="clearReviewAnalysis" type="button">Limpar resultado</button><button id="analyzeReviews" type="button" class="primary">Analisar avaliações</button></div>
+            </section>
+            <section class="card intelligence-result-card">
+              <div class="card-head"><div><h3>Diagnóstico de devoluções</h3><p>Conclusões vinculadas às evidências fornecidas.</p></div><button id="copyReviewAnalysis" type="button" disabled>Copiar relatório técnico</button></div>
+              <div id="reviewResult" class="intelligence-result"><div class="result-empty"><strong>Nenhuma análise gerada</strong><p>Cole avaliações ou observações de devolução e clique em Analisar avaliações.</p></div></div>
+            </section>
+          </div>
+        </div>
+
+        <div id="intel-optimizer" class="intelligence-panel" hidden>
+          <div class="grid intelligence-input-grid">
+            <section class="card">
+              <div class="card-title-row"><span class="section-icon" aria-hidden="true">✦</span><div><h3>Amazon Listing Optimization</h3><p>Reescreve título, bullets e descrição sem inventar características nem esconder limitações.</p></div></div>
+              <label for="listingGoal">Prioridade da otimização</label>
+              <select id="listingGoal"><option value="returns">Reduzir devoluções e compra errada</option><option value="balanced">Equilibrar clareza, conversão e SEO</option><option value="seo">SEO e conversão com linguagem conservadora</option></select>
+              <label for="listingTitle">Título atual</label><input id="listingTitle" maxlength="1000" placeholder="Título publicado ou planejado">
+              <label for="listingBullets">Tópicos em destaque atuais (bullets) · opcional</label>
+              <p class="muted">São as frases curtas que aparecem no anúncio perto do título e do preço. Se existirem, cole uma por linha.</p>
+              <textarea id="listingBullets" rows="9" maxlength="12000" placeholder="Ex.: Material resistente para uso diário&#10;Ex.: Fácil de limpar e guardar"></textarea>
+              <label for="listingDescription">Descrição atual</label><textarea id="listingDescription" rows="8" maxlength="18000" placeholder="Cole a descrição atual do anúncio."></textarea>
+              <label for="listingKeywords">Palavras-chave prioritárias (opcional)</label><textarea id="listingKeywords" rows="4" maxlength="4000" placeholder="Cole as palavras-chave que realmente correspondem ao produto. Se ficar vazio, a IA usará apenas os termos aparentes no anúncio."></textarea>
+              <label for="listingFacts">Fatos confirmados, limitações e instruções</label><textarea id="listingFacts" rows="7" maxlength="12000" placeholder="Ex.: produto macio, sem estrutura rígida; uso somente com supervisão."></textarea>
+              <label class="check-option"><input id="useReviewInOptimizer" type="checkbox" checked> Usar automaticamente o diagnóstico das avaliações acima</label>
+              <div class="action-row"><button id="clearListingOptimization" type="button">Limpar resultado</button><button id="optimizeListing" type="button" class="primary">Otimizar anúncio</button></div>
+            </section>
+            <section class="card intelligence-result-card">
+              <div class="card-head"><div><h3>Anúncio pronto para revisão</h3><p>A saída é independente dos textos A+.</p></div><button id="copyListingOptimization" type="button" disabled>Copiar anúncio completo</button></div>
+              <div id="listingResult" class="intelligence-result"><div class="result-empty"><strong>Nenhuma otimização gerada</strong><p>Informe o anúncio atual, os fatos confirmados e clique em Otimizar anúncio.</p></div></div>
+            </section>
+          </div>
         </div>
       </section>
     </main>
@@ -139,11 +226,12 @@
   <dialog id="apiDialog">
     <form method="dialog" class="dialog-card">
       <div class="card-head"><div><h3>API Key do modelo selecionado</h3><p id="apiState">Verificando configuração…</p></div><button value="cancel" aria-label="Fechar">×</button></div>
-      <label for="keyProvider">Provedor</label><select id="keyProvider"><option value="gemini">Google Gemini</option><option value="kira">KiraAI.vn</option><option value="groq">Groq</option><option value="deepseek">DeepSeek</option></select>
+      <label for="keyProvider">Provedor</label><select id="keyProvider"><option value="openai">OpenAI API oficial</option><option value="gemini">Google Gemini</option><option value="kira">KiraAI.vn</option><option value="groq">Groq</option><option value="deepseek">DeepSeek</option></select>
       <div id="savedKeyBox" hidden><label for="savedKeyMask">Chave salva</label><input id="savedKeyMask" readonly aria-label="Chave salva mascarada"><button id="replaceSavedKey" type="button">Substituir chave</button></div>
       <div id="newKeyBox"><label for="apiKey">Nova chave</label><input id="apiKey" type="password" autocomplete="off" placeholder="Cole sua API Key"></div>
       <p class="muted">A chave fica salva somente neste navegador e não é enviada aos produtos ou à página da Amazon.</p>
-      <div class="action-row"><button id="removeKey" type="button" class="danger">Remover chave</button><button id="saveKey" type="button" class="primary">Aplicar e salvar</button></div>
+      <p id="keyTestStatus" class="muted" aria-live="polite">Teste obrigatório antes de salvar. O teste não gera conteúdo.</p>
+      <div class="action-row"><button id="removeKey" type="button" class="danger">Remover chave</button><button id="testKey" type="button">Testar chave</button><button id="saveKey" type="button" class="primary" disabled>Salvar chave testada</button></div>
     </form>
   </dialog>
 </body>

@@ -1,5 +1,8 @@
-// Regras compartilhadas pelo popup, pelo worker e pelos testes. Sem dependências.
-export const DEFAULTS = Object.freeze({model: "auto/economico", faqCount: 5, specCount: 6});
+import {strategyPrompt} from "./strategy.js";
+
+// Regras compartilhadas pelo popup, pelo worker e pelos testes. Sem dependências externas.
+export const DEFAULTS = Object.freeze({model: "auto/economico", faqCount: 5, specCount: 6,
+  strategyMode: "auto", templateMode: "auto", customStrategy: ""});
 
 export const SELLER_HOSTS = Object.freeze([
   "sellercentral.amazon.com.br", "sellercentral.amazon.com", "sellercentral.amazon.ca",
@@ -19,7 +22,12 @@ export function settings(input = {}) {
     Number(value) >= 1 && Number(value) <= max ? Number(value) : fallback;
   const model = String(input.model || DEFAULTS.model).trim();
   if (!/^[a-zA-Z0-9._:/-]{1,100}$/.test(model)) throw new Error("Informe um nome de modelo válido.");
-  return {model, faqCount: integer(input.faqCount, 5, 6), specCount: integer(input.specCount, 6, 15)};
+  const allowedStrategies = new Set(["auto", "emotional", "practical", "technical", "premium", "conservative", "custom"]);
+  const allowedTemplates = new Set(["auto", "infantil", "pet", "eletronico", "moda", "saude", "ferramenta", "esporte", "automotivo", "viagem", "beleza", "casa", "generic"]);
+  const strategyMode = allowedStrategies.has(String(input.strategyMode || "")) ? String(input.strategyMode) : DEFAULTS.strategyMode;
+  const templateMode = allowedTemplates.has(String(input.templateMode || "")) ? String(input.templateMode) : DEFAULTS.templateMode;
+  return {model, faqCount: integer(input.faqCount, 5, 6), specCount: integer(input.specCount, 6, 15),
+    strategyMode, templateMode, customStrategy: String(input.customStrategy || "").trim().slice(0, 800)};
 }
 
 export function isSellerURL(value) {
@@ -235,9 +243,11 @@ export function normalizeAndValidate(raw, slots, source = {title: "", descriptio
   return {texts, notes, issues};
 }
 
-export function generationInstructions(slots) {
+export function generationInstructions(slots, strategy = null) {
   return `Você escreve conteúdo Amazon A+ Premium em português do Brasil.
 Responda APENAS com um objeto JSON válido no formato { "texts": { ... }, "notes": [ ... ] }.
+
+${strategyPrompt(strategy)}
 
 ORDEM OBRIGATÓRIA DE PRIORIDADE:
 1. Fidelidade aos dados fornecidos.
@@ -276,10 +286,15 @@ Todo fato do texto tem que vir literalmente da descrição fornecida.
 
 REGRAS DE ESCRITA:
 - Tom persuasivo, claro e conversacional. Fale diretamente com o cliente.
-- Foque em benefícios concretos e resultados práticos (o que o produto resolve ou melhora).
+- Antes de escrever, identifique silenciosamente o comprador, o momento de uso, a tensão que antecede a compra, o desejo emocional e a principal objeção.
+- Foque em benefícios concretos e resultados práticos. Sempre que houver apoio factual, conecte característica real -> mudança no uso -> sensação desejada.
+- Faça o cliente se reconhecer na situação, mas trate persona, dor e desejo como direção criativa cautelosa, nunca como um fato sobre todas as pessoas.
+- Faça cada corpo responder "por que isso importa na vida do cliente?". Use microcenas plausíveis do contexto comprovado para criar identificação, sem dramatizar.
+- Troque adjetivos genéricos como "incrível", "perfeito", "qualidade" e "praticidade" por consequências específicas que os dados realmente permitem explicar.
+- Headlines devem vender uma ideia e corpos devem prová-la ou explicá-la. Não repita o nome completo do produto em todos os módulos.
 - Inclua naturalmente as palavras-chave e termos de busca presentes no título e na descrição.
 - Use frases curtas, verbos ativos e linguagem fácil de ler.
-- Cada módulo deve destacar um benefício ou uso diferente. Evite repetir as mesmas ideias.
+- Cada módulo deve cumprir o ângulo atribuído na estratégia e destacar um benefício, uso, prova ou objeção diferente.
 - Priorize clareza e desejo de compra, sem exageros ou promessas vazias.
 - Explique, quando os dados existirem, medidas, compatibilidade, contexto de uso, limitações e itens inclusos. Essas informações evitam compras erradas.
 

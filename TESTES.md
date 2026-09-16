@@ -1,16 +1,35 @@
 # Verificação da entrega
 
-Data: 15/09/2026. Versão: 1.5.3.
+Data: 16/09/2026. Versão: 1.5.13.
 
 ## Testes executados
 
-O comando `npm test` executa 48 testes focados:
+O comando `npm test` executa os testes focados de regressão, incluindo:
 
 - normalização e validação do planejamento;
 - exigência de oito briefings e tamanhos corretos;
 - penalidades da nota de qualidade;
 - geração do planejamento no worker e persistência do resultado;
 - composição de um único prompt para as oito imagens separadas;
+- presença obrigatória de todas as variações confirmadas no primeiro e no último banner;
+- escolha contextual e variedade entre homem e mulher nas cenas humanas;
+- identificação e roteamento da OpenAI API oficial;
+- teste de chave por listagem de modelos, sem geração de conteúdo;
+- detecção automática de categoria, inclusive prioridade para produtos infantis e de saúde;
+- biblioteca de ângulos diferentes por módulo e direção manual opcional;
+- checklist por categoria sem considerar fatos vazios como preenchidos;
+- estratégia persuasiva compartilhada entre textos e briefings de imagens;
+- redescoberta de campos quando a Amazon recria um módulo durante o preenchimento;
+- diagnóstico legível durante um preenchimento e recuperação automática de operação abandonada;
+- limites de tempo por campo e para a tentativa completa, sem bloqueio permanente;
+- escrita autocontida no MAIN world por KAT, Shadow DOM, React e Draft.js;
+- relatório persistente da última tentativa de preenchimento;
+- teste da ponte de escrita sem alteração de campos;
+- códigos técnicos e ID por tentativa, incluindo autorização ausente e mudança de documento;
+- relatório seguro sem token de autorização, API Key ou textos completos;
+- início, retomada e finalização do registro de montagem manual;
+- ordem estrutural `full > four > two > faq > full > specs`;
+- relatório do gravador sem valores dos campos de produto;
 - remoção local de marcadores de ausência nas especificações;
 - consolidação de todas as medidas em uma única especificação;
 - preservação de especificações mesmo quando repetem fatos úteis da FAQ;
@@ -46,20 +65,20 @@ Regressão 1.1.1: o teste do painel inclui sender.tab, como no Chrome. Antes da 
 
 1.1.2: testes do cliente e worker reais conectados por portas simuladas, incluindo handshake de versão, chave, projetos, chamadas concorrentes, desconexão e rejeição de origens externas.
 
-Resultado: **48 aprovados, 0 falhas**. Incluídos testes de mapeamento, medidas, SKU no CSV, revisão e correção seletiva, diagnóstico detalhado, máscara da chave, geração de textos e oito briefings juntos e validação da URL/ASIN com interrupção diante de captcha. Os testes focados usam mensagens e DOM simulados; não foi feita validação em conta autenticada nesta correção.
+Resultado da versão 1.5.13: **99 aprovados, 0 falhas**. Foram acrescentados testes para reconhecer os controles reais registrados na Amazon, ignorar cliques sem efeito, validar prefixos seguros da sequência, preparar os módulos antes do preenchimento e garantir que a preparação não escreva nos campos. Permanecem cobertos mapeamento, medidas, SKU no CSV, revisão e correção seletiva, diagnóstico detalhado, ponte segura, códigos de causa, recuperação de preenchimento, cópia rápida, APIs, planejamento e validação de URL/ASIN. Os testes de navegador não puderam ser executados neste ambiente porque o binário do Chromium do Playwright não está instalado; os testes focados usam mensagens e DOM simulados e não substituem a validação final em uma conta autenticada da Amazon.
 
 Também passaram a verificação de sintaxe de `planning.js`, `openai.js`, `background.js` e `popup.js`, a leitura do `manifest.json` e a conferência de que todos os IDs usados por `popup.js` existem em `popup.html`.
 
 ## Limitações
 
 - Não houve acesso autenticado à conta do usuário. A primeira execução real deve confirmar a estrutura atual das páginas do Seller Central.
-- A chamada real à Groq não foi feita; o fluxo de streaming foi simulado no teste do worker.
-- Os cenários antigos de navegador com Playwright permanecem no projeto, mas não fazem parte do conjunto focado. O download do Chromium de teste pode depender da rede do ambiente.
+- Chamadas reais aos provedores não foram feitas; rede, respostas e streaming foram simulados nos testes.
+- Os cenários de navegador com Playwright foram solicitados, mas não executaram porque o ambiente não possui o binário do Chromium. Isso é uma limitação do ambiente de teste, não uma falha observada no código.
 - Captcha ou limitação da Amazon podem impedir uma conclusão; a extensão deve marcar esses casos como bloqueados ou inconclusivos.
 
 ## Segurança
 
-- A auditoria não lê nem usa a API Key da Groq.
+- A auditoria não lê nem usa as API Keys dos provedores.
 - A chave não é enviada às páginas da Amazon.
-- O planejamento e a geração enviam apenas os dados do produto fornecidos pelo usuário à Groq.
+- O planejamento e a geração enviam apenas os dados do produto fornecidos pelo usuário ao provedor escolhido.
 - A nota de qualidade é calculada localmente e não consome créditos.

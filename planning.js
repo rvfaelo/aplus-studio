@@ -1,18 +1,21 @@
 import {generateStructured} from "./openai.js";
+import {compactSalesStrategy, strategyPrompt} from "./strategy.js";
 
 const clean = (value, max = 1200) => String(value ?? "").normalize("NFC")
   .replace(/[\u0000-\u001f\u007f\u200b-\u200f\u202a-\u202e\u2066-\u2069]/g, " ")
   .replace(/\s+/g, " ").trim().slice(0, max);
 
-export function planningInstructions() {
+export function planningInstructions(strategy = null) {
   return `Você é um planejador de Amazon A+ Premium em português do Brasil.
 Responda SOMENTE com JSON válido. Não use Markdown.
+
+${strategyPrompt(strategy)}
 
 Use exclusivamente os fatos do título e da descrição. Nunca invente medidas, material, capacidade, compatibilidade, certificação, itens inclusos, garantia, desempenho, público ou resultado. Público, problema e contexto de uso que não estejam explícitos devem ser marcados como inferência cautelosa.
 
 Formato obrigatório:
 {
-  "diagnosis": {"category":"", "audience":"", "audience_is_inference":true, "main_problem":"", "central_benefit":"", "summary":""},
+  "diagnosis": {"category":"", "audience":"", "audience_is_inference":true, "purchase_moment":"", "main_problem":"", "emotional_desire":"", "main_objection":"", "central_benefit":"", "summary":""},
   "missing_information":[{"field":"", "reason":""}],
   "feature_benefits":[{"feature":"", "benefit":"", "evidence":""}],
   "image_briefs":[{"module":"", "size":"", "goal":"", "scene":"", "composition":"", "prompt":""}],
@@ -21,6 +24,7 @@ Formato obrigatório:
 
 Regras:
 - Liste de 3 a 8 informações realmente ausentes que fariam diferença no A+. Não diga que algo falta quando aparece na descrição.
+- Refine audience, purchase_moment, main_problem, emotional_desire e main_objection para este produto específico. Marque audience_is_inference como true sempre que o público não estiver literal nos dados.
 - Crie de 2 a 8 relações característica-benefício. evidence deve ser um trecho curto ou paráfrase estritamente sustentada pelos dados recebidos.
 - Se houver menos de 2 características comprovadas, use apenas as disponíveis e explique em notes.
 - Crie exatamente 8 briefings de imagens, nesta ordem e com estes nomes/tamanhos:
@@ -32,7 +36,10 @@ Regras:
   6. Duas imagens · Imagem 1 — 650 × 350
   7. Duas imagens · Imagem 2 — 650 × 350
   8. Banner final — 1464 × 600
-- Cada briefing deve usar uma cena, fundo e ângulo diferentes, sem colagem, grid ou mosaico.
+- Cada briefing deve cumprir a função persuasiva do módulo definida na estratégia, além de usar cena, fundo e ângulo visual diferentes, sem colagem, grid ou mosaico.
+- Se o produto tiver mais de uma variação confirmada (como cor, estampa, tamanho, kit ou modelo), o Banner principal e o Banner final devem mostrar TODAS as variações juntas. Não escolha apenas uma e não invente variações ausentes dos dados ou das imagens de referência. Essa regra permite reutilizar o mesmo A+ nos ASINs das variações.
+- Quando uma pessoa ajudar a demonstrar o benefício, escolha homem ou mulher conforme o público, a categoria e o cenário de uso. Em produtos de uso amplo, distribua homens e mulheres entre as cenas humanas para mostrar contextos diferentes; por exemplo, uma almofada de cadeira pode aparecer com uma mulher e com um homem trabalhando em home office. Não force alternância nem inclua uma pessoa quando isso não contribuir para a estratégia do produto.
+- Nos briefings que incluírem pessoas, declare de forma explícita no campo prompt quem aparece e qual uso real está sendo demonstrado. Evite repetir a mesma pessoa em todas as imagens.
 - Os banners devem manter produto e elementos essenciais na área central segura de aproximadamente 600 × 450.
 - Os prompts devem pedir produto idêntico à referência, fotografia comercial realista, sem texto, logo, marca d'água, números ou medidas na imagem.
 - Não sugira depoimentos, avaliações, concorrentes, descontos, urgência, garantia ou alegações sem prova.
@@ -42,6 +49,7 @@ Regras:
 export function normalizePlan(raw) {
   const issues = [], diagnosis = raw?.diagnosis || {};
   const requiredDiagnosis = ["category", "audience", "main_problem", "central_benefit", "summary"];
+  const optionalDiagnosis = ["purchase_moment", "emotional_desire", "main_objection"];
   for (const key of requiredDiagnosis) if (typeof diagnosis[key] !== "string") issues.push(`diagnosis.${key} ausente.`);
   const pairs = (value, keys, max) => Array.isArray(value) ? value.slice(0, max).map((item, index) => {
     const result = {};
@@ -54,6 +62,9 @@ export function normalizePlan(raw) {
   const missingInformation = pairs(raw?.missing_information, ["field", "reason"], 8);
   const featureBenefits = pairs(raw?.feature_benefits, ["feature", "benefit", "evidence"], 8);
   const imageBriefs = pairs(raw?.image_briefs, ["module", "size", "goal", "scene", "composition", "prompt"], 8);
+  imageBriefs.forEach((brief, index) => {
+    if (index === 0 || index === 7) brief.prompt = clean(`${brief.prompt} Se existirem duas ou mais variações confirmadas do produto nos dados ou nas imagens de referência, mostre todas elas juntas neste banner, sem omitir nenhuma e sem inventar novas variações.`, 3000);
+  });
   if (missingInformation.length < 3) issues.push("Liste pelo menos 3 informações ausentes relevantes.");
   if (!featureBenefits.length) issues.push("Inclua ao menos uma relação entre característica e benefício.");
   if (imageBriefs.length !== 8) issues.push("São necessários exatamente 8 briefings de imagem.");
@@ -61,14 +72,19 @@ export function normalizePlan(raw) {
   imageBriefs.forEach((brief, index) => {
     if (brief.size.replace(/x/g, "×").replace(/\s/g, "") !== expectedSizes[index]?.replace(/\s/g, "")) issues.push(`Tamanho incorreto no briefing ${index + 1}.`);
   });
-  const value = {diagnosis: Object.fromEntries(requiredDiagnosis.map(key => [key, clean(diagnosis[key])])),
+  const value = {diagnosis: Object.fromEntries([...requiredDiagnosis, ...optionalDiagnosis].map(key => [key, clean(diagnosis[key])])),
     audienceIsInference: Boolean(diagnosis.audience_is_inference), missingInformation, featureBenefits, imageBriefs,
     notes: Array.isArray(raw?.notes) ? raw.notes.slice(0, 12).map(note => clean(note, 700)) : []};
   return {value, issues};
 }
 
 export async function generatePlan(options) {
-  return generateStructured({...options, instructions: planningInstructions(), validate: normalizePlan});
+  const plan = await generateStructured({...options, instructions: planningInstructions(options.strategy), validate: normalizePlan});
+  if (options.strategy) {
+    plan.salesStrategy = compactSalesStrategy(options.strategy);
+    plan.categoryChecklist = options.strategy.checklist || [];
+  }
+  return plan;
 }
 
 export function buildFullImagePrompt(plan, title = "") {
@@ -82,11 +98,18 @@ export function buildFullImagePrompt(plan, title = "") {
     "- Gere cada imagem separadamente, como uma imagem individual. Nunca use grid, colagem, mosaico ou montagem com várias cenas.",
     "- O produto deve permanecer idêntico às imagens de referência, sem mudar formato, cor, proporções, peças ou detalhes.",
     "- Use fotografia comercial realista de alta qualidade e mantenha uma cena, fundo e ângulo diferentes em cada imagem.",
+    "- Se houver duas ou mais variações confirmadas do produto, mostre TODAS juntas na imagem 1 (Banner principal) e na imagem 8 (Banner final). Não omita nem invente variações.",
+    "- Use pessoas somente quando demonstrarem um benefício real. Escolha homem ou mulher conforme o produto, o público e a situação; em produtos de uso amplo, varie entre homem e mulher nas cenas humanas, sem repetir sempre a mesma pessoa e sem forçar uma presença humana inadequada.",
     "- Não inclua texto, letras, números, medidas, setas, logos ou marcas d'água.",
     "- Nos banners 1464 × 600, mantenha o produto e os elementos essenciais dentro da área segura central aproximada de 600 × 450.",
     "- Produza as imagens na ordem abaixo e respeite exatamente o tamanho indicado para cada uma.",
     ""
   ];
+  if (plan?.salesStrategy) {
+    lines.push(`Direção de venda: ${clean(plan.salesStrategy.direction, 800)}`,
+      `Cliente e desejo: ${clean(plan.salesStrategy.buyer, 700)}; ${clean(plan.salesStrategy.desire, 700)}`,
+      "Cada imagem deve reforçar o ângulo comercial do seu módulo sem adicionar texto à própria imagem.", "");
+  }
   briefs.forEach((brief, index) => {
     lines.push(`${index + 1}. ${clean(brief.module, 300)} (${clean(brief.size, 80)})`);
     if (brief.goal) lines.push(`Objetivo: ${clean(brief.goal, 700)}`);

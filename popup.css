@@ -74,6 +74,7 @@
 .audit-detail{color:#7a8982}
 .audit-open{font-size:10px;margin-top:3px}
 .cloud-key{margin-top:14px;padding-top:12px;border-top:1px solid #e0e7e3}.cloud-key-heading{display:flex;align-items:center;justify-content:space-between;gap:8px}.cloud-key-heading strong{font-size:11px;color:#496058}.cloud-key input{margin-top:8px}.cloud-actions{display:flex;gap:8px;margin-top:8px}.cloud-actions button{flex:1;margin-top:0}.cloud-key .danger{display:block;margin-top:9px}
+.key-validation-actions{display:grid;grid-template-columns:1fr 1.35fr;gap:8px;margin-top:8px}.key-validation-actions button{margin-top:0}.key-validation-actions .secondary{margin-top:0}
 
 /* Planejamento e qualidade */
 .planning-section{margin-top:16px;border-color:#cddfd8}

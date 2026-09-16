@@ -4,7 +4,7 @@
 // Nunca passa pela página a chave OpenAI, o prompt ou uma instrução dinâmica.
 export async function writeAmazonField(marker, value, expectedBefore, expectedHref) {
   if (!/^[a-f0-9-]{36}$/.test(marker) || typeof value !== "string" || value.length > 20000 ||
-    typeof expectedBefore !== "string" || location.href !== expectedHref) return {written: false};
+    typeof expectedBefore !== "string" || location.href !== expectedHref) return {written: false, method: "guard", reason: "marcador, texto ou página inválidos"};
   const matches = [], visited = new Set();
   function search(root) {
     if (!root || visited.has(root)) return;
@@ -18,37 +18,83 @@ export async function writeAmazonField(marker, value, expectedBefore, expectedHr
     }
   }
   search(document);
-  if (matches.length !== 1) return {written: false};
+  if (matches.length !== 1) return {written: false, method: "guard", reason: `marcador encontrado ${matches.length} vez(es)`};
   const el = matches[0], doc = el.ownerDocument, view = doc.defaultView;
   const kat = el.matches("kat-input,kat-textarea");
   const draft = el.matches('.public-DraftEditor-content[contenteditable="true"]');
   const normalize = text => String(text || "")
     .replace(/[\u200B-\u200D\uFEFF]/g, "")
     .replace(/\s+/g, " ").trim();
-  const current = () => kat ? String(el.value ?? el.getAttribute("value") ?? "") : el.innerText ?? el.textContent ?? "";
+  const katControl = kat ? el.shadowRoot?.querySelector?.("input,textarea") || el.querySelector?.("input,textarea") || null : null;
+  const current = () => kat ? String(katControl ? katControl.value ?? "" : el.value ?? el.getAttribute("value") ?? "")
+    : el.innerText ?? el.textContent ?? "";
+  const beforeMatches = current() === expectedBefore;
   if ((!kat && !draft) || !el.isConnected || el.disabled || el.readOnly || !el.getClientRects().length ||
-    current() !== expectedBefore) return {written: false};
-  for (let p = el; p; p = p.parentElement || p.getRootNode()?.host || p.ownerDocument?.defaultView?.frameElement) {
+    !beforeMatches) return {written: false, method: "guard", reason: "campo mudou, foi removido ou não é editável"};
+  for (let p = el; p; p = p.parentElement || p.getRootNode?.()?.host || p.ownerDocument?.defaultView?.frameElement) {
     const style = p.ownerDocument.defaultView.getComputedStyle(p);
     if (p.hidden || p.inert || p.getAttribute("aria-hidden") === "true" ||
       p.getAttribute("aria-disabled") === "true" || p.getAttribute("aria-readonly") === "true" ||
-      style.display === "none" || style.visibility === "hidden") return {written: false};
+      style.display === "none" || style.visibility === "hidden") return {written: false, method: "guard", reason: "campo oculto ou desabilitado"};
   }
   for (const attr of ["maxlength", "max-length", "data-maxlength", "data-max-length"]) {
     const raw = el.getAttribute(attr);
-    if (raw !== null && /^\d+$/.test(raw) && value.length > Number(raw)) return {written: false};
+    if (raw !== null && /^\d+$/.test(raw) && value.length > Number(raw)) return {written: false, method: "guard", reason: `limite de ${raw} caracteres`};
   }
   const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
   const fire = type => el.dispatchEvent(new view.Event(type, {bubbles: true, composed: true}));
   el.focus({preventScroll: true});
 
   if (kat) {
+    const confirmed = () => normalize(current()) === normalize(value);
     el.value = value;
     el.setAttribute("value", value);
-    fire("input"); fire("change"); el.blur();
-    await sleep(120);
-    return {written: location.href === expectedHref && el.isConnected && normalize(current()) === normalize(value)
-      && el.getAttribute("value") === value};
+    fire("input"); fire("change");
+    await sleep(180);
+    if (location.href === expectedHref && el.isConnected && confirmed()) {
+      el.blur(); return {written: true, method: "kat-host", reason: ""};
+    }
+
+    // Algumas versões do KAT mantêm o valor real em um input dentro do
+    // Shadow DOM. Disparar o evento nesse controle alcança o listener do React.
+    if (katControl) {
+      try {
+        katControl.focus?.({preventScroll: true});
+        const controlView = katControl.ownerDocument?.defaultView || view;
+        const proto = katControl.matches?.("textarea") ? controlView.HTMLTextAreaElement?.prototype : controlView.HTMLInputElement?.prototype;
+        const setter = proto && Object.getOwnPropertyDescriptor(proto, "value")?.set;
+        if (setter) setter.call(katControl, value); else katControl.value = value;
+        katControl.dispatchEvent(new controlView.InputEvent("input", {bubbles: true, composed: true, inputType: "insertText", data: value}));
+        katControl.dispatchEvent(new controlView.Event("change", {bubbles: true, composed: true}));
+        el.value = value; el.setAttribute("value", value); fire("input"); fire("change");
+        await sleep(260);
+        if (location.href === expectedHref && el.isConnected && confirmed()) {
+          katControl.blur?.(); el.blur(); return {written: true, method: "kat-shadow-input", reason: ""};
+        }
+      } catch { /* Continua para o handler React. */ }
+    }
+
+    // Última via para KAT controlado: chama somente handlers de mudança já
+    // expostos pelo próprio nó, sem procurar ou executar código da página.
+    try {
+      let handled = false;
+      for (const node of [katControl, el].filter(Boolean)) {
+        const propsKey = Object.keys(node).find(key => key.startsWith("__reactProps$"));
+        const props = propsKey ? node[propsKey] : null;
+        const handler = typeof props?.onChange === "function" ? props.onChange : typeof props?.onInput === "function" ? props.onInput : null;
+        if (!handler) continue;
+        handler({type: "change", target: katControl || el, currentTarget: katControl || el, bubbles: true});
+        handled = true;
+      }
+      if (handled) {
+        await sleep(260);
+        if (location.href === expectedHref && el.isConnected && confirmed()) {
+          el.blur(); return {written: true, method: "kat-react-handler", reason: ""};
+        }
+      }
+    } catch { /* A confirmação abaixo retorna a falha sem quebrar os demais campos. */ }
+    el.blur();
+    return {written: false, method: "kat", reason: "o componente KAT reverteu o valor após host, Shadow DOM e evento React"};
   }
 
   // --- Helpers de Draft.js: precisam ser closures para serem serializados ---
@@ -132,10 +178,10 @@ export async function writeAmazonField(marker, value, expectedBefore, expectedHr
 
   const pasteBeforeInput = () => {
     try {
-      if (!setSelectionAll()) return false;
       const dt = new DataTransfer();
       dt.setData("text/plain", value);
       dt.setData("text", value);
+      if (!setSelectionAll()) return false;
       el.dispatchEvent(new view.InputEvent("beforeinput", {
         bubbles: true, cancelable: true, composed: true,
         inputType: "insertFromPaste", dataTransfer: dt
@@ -187,7 +233,7 @@ export async function writeAmazonField(marker, value, expectedBefore, expectedHr
   if (syncDraftState()) {
     if (await confirmWithRetries([700, 500, 500])) {
       el.blur();
-      return {written: location.href === expectedHref};
+      return {written: location.href === expectedHref, method: "draft-react-state", reason: ""};
     }
     // A 1 aplicou mas o React não refletiu. NÃO cai para execCommand (destruiria
     // o estado). Tenta paste como segunda via.
@@ -197,7 +243,7 @@ export async function writeAmazonField(marker, value, expectedBefore, expectedHr
   if (pasteBeforeInput()) {
     if (await confirmWithRetries([700, 500])) {
       el.blur();
-      return {written: location.href === expectedHref};
+      return {written: location.href === expectedHref, method: "draft-beforeinput", reason: ""};
     }
   }
 
@@ -205,7 +251,7 @@ export async function writeAmazonField(marker, value, expectedBefore, expectedHr
   if (pasteClipboardEvent()) {
     if (await confirmWithRetries([700, 500])) {
       el.blur();
-      return {written: location.href === expectedHref};
+      return {written: location.href === expectedHref, method: "draft-paste", reason: ""};
     }
   }
 
@@ -213,10 +259,10 @@ export async function writeAmazonField(marker, value, expectedBefore, expectedHr
   if (await writeDraftDom()) {
     if (await confirmWithRetries([700, 500])) {
       el.blur();
-      return {written: location.href === expectedHref};
+      return {written: location.href === expectedHref, method: "draft-exec-command", reason: ""};
     }
   }
 
   el.blur();
-  return {written: false};
+  return {written: false, method: "draft", reason: "o Draft.js não confirmou o texto após todas as estratégias"};
 }

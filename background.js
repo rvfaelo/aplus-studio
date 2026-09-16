@@ -1,13 +1,16 @@
 import {DEFAULTS, settings, isSellerURL, isAplusEditorURL, safeSellerURL, makeSlots} from "./shared.js";
-import {generateTexts} from "./openai.js";
+import {generateStructured, generateTexts, testApiKey} from "./openai.js";
 import {writeAmazonField} from "./page-writer.js";
 import {normalizeAsins, inspectProductHTML, scanSellerCatalogPage} from "./catalog-audit.js";
 import {generatePlan, scoreAplus} from "./planning.js";
-import {createProject, factualDescription, normalizeAsin, validateProject} from "./projects.js";
+import {PROJECT_STATUS, createProject, factualDescription, normalizeAsin, validateProject} from "./projects.js";
 import {isPanelSender} from "./panel-connection.js";
 import {captureProductPage, matchesProductURL} from "./product-page.js";
 import {encryptApiKey, decryptApiKey, isCloudKeyRecord} from "./key-sync.js";
 import {providerForModel, routesFor} from "./providers.js";
+import {buildSalesStrategy, compactSalesStrategy} from "./strategy.js";
+import {captureAmazonReviewPage, listingOptimizerRequest, matchesAmazonReviewURL,
+  normalizeListingOptimization, normalizeReviewAnalysis, reviewAnalyzerRequest} from "./listing-intelligence.js";
 
 // Somente páginas confiáveis da extensão leem a sessão. A chave nunca vai ao content script.
 const ready = Promise.all([
@@ -20,18 +23,24 @@ let active = null;
 let auditActive = null;
 let planningActive = null;
 let projectActive = null;
+let intelligenceActive = null;
 let stateQueue = Promise.resolve();
 let draftQueue = Promise.resolve();
 const activeStates = new Set(["scanning", "generating", "filling"]);
 const auditActiveStates = new Set(["queued", "checking"]);
 const planningActiveStates = new Set(["planning"]);
-const EXTENSION_VERSION = chrome.runtime.getManifest?.().version || "1.5.3";
+const EXTENSION_VERSION = chrome.runtime.getManifest?.().version || "1.5.13";
 const PAGE_CHANNEL = `aplus-page-v${EXTENSION_VERSION}`;
 
 async function providerKeys(model) {
   const saved=await chrome.storage.local.get(["apiKeys","apiKey"]), keys={...(saved.apiKeys||{})};
   if(saved.apiKey){const provider=providerForModel(model)==="auto"?"gemini":providerForModel(model);if(!keys[provider])keys[provider]=saved.apiKey}
   return keys;
+}
+async function keyProof(provider, apiKey) {
+  const bytes = new TextEncoder().encode(`${provider}\u0000${apiKey}`);
+  const digest = await crypto.subtle.digest("SHA-256", bytes);
+  return [...new Uint8Array(digest)].map(value => value.toString(16).padStart(2, "0")).join("");
 }
 async function routed(model,purpose,onStage,operation) {
   const routes=routesFor(model,await providerKeys(model),purpose);
@@ -93,10 +102,11 @@ async function generateProjectDraft(project, signal, onStage = () => {}) {
   const description = factualDescription(next);
   if (!next.title) throw new Error("Informe o título do produto.");
   if (!description) throw new Error("Informe a descrição ou ao menos um fato confirmado.");
-  const generated = await routed(cfg.model,"texts",onStage,(apiKey,model,routedStage)=>generateTexts({apiKey,title:next.title,description,model,slots,signal,onStage:routedStage}));
+  const strategy = buildSalesStrategy(next);
+  const generated = await routed(cfg.model,"texts",onStage,(apiKey,model,routedStage)=>generateTexts({apiKey,title:next.title,description,model,slots,strategy,signal,onStage:routedStage}));
   next.slots = slots; next.texts = generated.texts; next.notes = generated.notes;
   next.quality = scoreAplus({slots, texts: next.texts, title: next.title, description});
-  next.approved = false; next.status = "review"; next.error = ""; next.updatedAt = Date.now();
+  next.approved = false; next.status = "review"; next.fillReport = null; next.error = ""; next.updatedAt = Date.now();
   return next;
 }
 
@@ -188,8 +198,9 @@ async function runPlanning(task, request) {
   const keepAlive = setInterval(() => { chrome.runtime.getPlatformInfo().catch(() => {}); }, 20000);
   try {
     const cfg = settings(request.config);
+    const strategy = buildSalesStrategy({title: request.title, description: request.description, config: cfg});
     await planningState({id: task.id, status: "planning", message: "Analisando o produto e criando o planejamento…"});
-    const planResult = await routed(cfg.model,"planning",message=>planningState({message}).catch(()=>{}),(apiKey,model,onStage)=>generatePlan({apiKey,title:request.title.trim(),description:request.description.trim(),model,signal:task.controller.signal,onStage,onRateLimit:rateLimit=>planningState({rateLimit}).catch(()=>{})}));
+    const planResult = await routed(cfg.model,"planning",message=>planningState({message}).catch(()=>{}),(apiKey,model,onStage)=>generatePlan({apiKey,title:request.title.trim(),description:request.description.trim(),model,strategy,signal:task.controller.signal,onStage,onRateLimit:rateLimit=>planningState({rateLimit}).catch(()=>{})}));
     if (task.controller.signal.aborted) throw new Error("Operação cancelada.");
     await chrome.storage.local.set({planResult});
     await planningState({status: "done", message: "Planejamento concluído. Revise as informações e os briefings."});
@@ -384,7 +395,7 @@ async function connect(tabId, trace = null) {
   } catch { /* A aba pode ser anterior à instalação ou à atualização. */ }
 
   try {
-    const injected = await chrome.scripting.executeScript({target: {tabId}, world: "ISOLATED", files: ["content-engine.js", "content.js"]});
+    const injected = await chrome.scripting.executeScript({target: {tabId}, world: "ISOLATED", files: ["module-automation.js", "content-engine.js", "content.js"]});
     const documentId = injected[0]?.documentId;
     if (!documentId) throw new Error("Documento não identificado.");
     const pong = await chrome.tabs.sendMessage(tabId, {channel: PAGE_CHANNEL, action: "ping"}, {documentId});
@@ -406,18 +417,126 @@ async function connect(tabId, trace = null) {
 async function page(target, action, data = {}) {
   await tabById(target.tabId, target.url);
   let response;
+  const timeoutMs = action === "fill" || action === "prepareModules" ? 180000 : action === "diagnose" ? 20000 : 15000;
+  let timer;
   try {
-    response = await chrome.tabs.sendMessage(target.tabId, {channel: PAGE_CHANNEL, action, ...data}, {documentId: target.documentId});
-  } catch { throw new Error("A edição foi recarregada ou está inacessível. Abra a extensão novamente."); }
+    response = await Promise.race([
+      chrome.tabs.sendMessage(target.tabId, {channel: PAGE_CHANNEL, action, ...data}, {documentId: target.documentId}),
+      new Promise((_, reject) => { timer = setTimeout(() => reject(new Error(`timeout:${action}`)), timeoutMs); })
+    ]);
+  } catch (error) {
+    if (String(error?.message || "").startsWith("timeout:")) {
+      if (action === "fill") chrome.tabs.sendMessage(target.tabId,
+        {channel: PAGE_CHANNEL, action: "cancel"}, {documentId: target.documentId}).catch(() => {});
+      throw new Error(action === "fill"
+        ? "A Amazon não respondeu ao preenchimento em 3 minutos. A tentativa foi cancelada e o conector foi liberado; execute o diagnóstico antes de tentar novamente."
+        : "A Amazon não respondeu à leitura do editor no tempo esperado. O conector foi liberado; execute o diagnóstico novamente.");
+    }
+    throw new Error("A edição foi recarregada ou está inacessível. Abra a extensão novamente.");
+  } finally { clearTimeout(timer); }
   if (!response?.ok) throw new Error(response?.error || "A página não respondeu.");
   return response.data;
+}
+
+const NATIVE_WRITE_LEASE_KEY = "nativeWriteLease";
+const NATIVE_WRITE_LEASE_MS = 5 * 60 * 1000;
+
+async function openNativeWriteLease(target) {
+  const token = crypto.randomUUID();
+  const attemptId = crypto.randomUUID();
+  const createdAt = Date.now();
+  await chrome.storage.session.set({[NATIVE_WRITE_LEASE_KEY]: {
+    token,
+    attemptId,
+    tabId: target.tabId,
+    documentId: target.documentId,
+    editorUrl: target.url,
+    createdAt,
+    expiresAt: createdAt + NATIVE_WRITE_LEASE_MS
+  }});
+  return {token, attemptId};
+}
+
+async function closeNativeWriteLease(token) {
+  const saved = await chrome.storage.session.get(NATIVE_WRITE_LEASE_KEY);
+  if (saved[NATIVE_WRITE_LEASE_KEY]?.token === token)
+    await chrome.storage.session.remove(NATIVE_WRITE_LEASE_KEY);
+}
+
+async function withNativeWriteLease(target, operation) {
+  const authorization = await openNativeWriteLease(target);
+  try { return await operation(authorization); }
+  finally { await closeNativeWriteLease(authorization.token); }
+}
+
+function bridgeDiagnostic({sender = {}, lease = null, message = {}, code}) {
+  const now = Date.now();
+  return {
+    code,
+    extensionVersion: EXTENSION_VERSION,
+    generatedAt: new Date(now).toISOString(),
+    attemptId: String(lease?.attemptId || message.attemptId || "").slice(0, 36) || null,
+    leasePresent: Boolean(lease),
+    leaseRemainingMs: lease ? Math.max(0, Number(lease.expiresAt || 0) - now) : 0,
+    senderTabId: Number.isSafeInteger(sender.tab?.id) ? sender.tab.id : null,
+    expectedTabId: Number.isSafeInteger(lease?.tabId) ? lease.tabId : null,
+    senderFrameId: Number.isSafeInteger(sender.frameId) ? sender.frameId : null,
+    senderDocumentPresent: Boolean(sender.documentId),
+    leaseDocumentPresent: Boolean(lease?.documentId),
+    documentChanged: Boolean(sender.documentId && lease?.documentId && sender.documentId !== lease.documentId),
+    editorPath: safeSellerURL(message.href || sender.url || lease?.editorUrl || "")
+  };
+}
+
+function bridgeFailure(code, error, context) {
+  return {ok: false, code, error, diagnostic: bridgeDiagnostic({...context, code})};
+}
+
+async function validateNativeBridge(message, sender, {requiresField = false} = {}) {
+  const context = {message, sender, lease: null};
+  if (sender.id !== chrome.runtime.id || !sender.tab)
+    return bridgeFailure("BRIDGE_INVALID_SENDER", "O pedido não veio do conector autorizado da extensão.", context);
+  if (!isSellerURL(sender.url))
+    return bridgeFailure("BRIDGE_INVALID_HOST", "O conector não está em uma página autorizada do Seller Central.", context);
+  if (!isAplusEditorURL(message.href))
+    return bridgeFailure("BRIDGE_INVALID_EDITOR_URL", "A página atual não é o editor A+ Premium reconhecido.", context);
+  if (!/^[a-f0-9-]{36}$/.test(String(message.writeToken || "")))
+    return bridgeFailure("BRIDGE_INVALID_TOKEN_FORMAT", "A autorização temporária não foi recebida corretamente.", context);
+  if (requiresField && !/^[a-f0-9-]{36}$/.test(String(message.marker || "")))
+    return bridgeFailure("BRIDGE_INVALID_MARKER", "O identificador temporário do campo é inválido.", context);
+  if (requiresField && (typeof message.value !== "string" || message.value.length > 20000 || typeof message.expectedBefore !== "string"))
+    return bridgeFailure("BRIDGE_INVALID_PAYLOAD", "O conteúdo enviado ao campo é inválido ou excede o limite técnico.", context);
+  const saved = await chrome.storage.session.get(NATIVE_WRITE_LEASE_KEY);
+  context.lease = saved[NATIVE_WRITE_LEASE_KEY] || null;
+  const lease = context.lease;
+  if (!lease) return bridgeFailure("BRIDGE_LEASE_MISSING", "A autorização temporária desapareceu da sessão do Chrome.", context);
+  if (lease.token !== message.writeToken)
+    return bridgeFailure("BRIDGE_TOKEN_MISMATCH", "A autorização recebida não pertence a esta tentativa.", context);
+  if (Date.now() > Number(lease.expiresAt || 0))
+    return bridgeFailure("BRIDGE_LEASE_EXPIRED", "A autorização temporária expirou antes da escrita.", context);
+  if (sender.tab.id !== lease.tabId)
+    return bridgeFailure("BRIDGE_TAB_MISMATCH", "A autorização pertence a outra aba da Amazon.", context);
+  if (sender.frameId !== undefined && sender.frameId !== 0)
+    return bridgeFailure("BRIDGE_FRAME_MISMATCH", "O pedido partiu de um iframe, não do documento principal.", context);
+  if (!sender.documentId && !lease.documentId)
+    return bridgeFailure("BRIDGE_DOCUMENT_MISSING", "O Chrome não informou o documento ativo da página.", context);
+  const diagnostic = bridgeDiagnostic({...context, code: "BRIDGE_READY"});
+  return {ok: true, lease, documentId: sender.documentId || lease.documentId, diagnostic};
+}
+
+function textsForFill(slots, source = {}) {
+  return Object.fromEntries(slots.map(slot => {
+    const legacyFixedText = slot.key === "specs_heading"
+      ? ["Especificações técnicas", "Ficha técnica", "Dados", "Info"].find(value => value.length <= slot.limit) || "" : "";
+    return [slot.key, String(source?.[slot.key] || slot.fixedText || legacyFixedText)];
+  }));
 }
 
 function finishFillDiagnostic(report) {
   const hasError = report.checks.some(check => check.status === "error");
   const hasWarning = report.checks.some(check => check.status === "warning");
   report.status = hasError ? "error" : hasWarning ? "warning" : "ok";
-  const priority = ["seller_tabs", "editor_tab", "editor_url", "connector_failure", "connector_recovery", "page_diagnostic",
+  const priority = ["seller_tabs", "editor_tab", "editor_url", "connector_failure", "connector_recovery", "page_diagnostic", "page_operation",
     "amazon_access", "module_render", "fields", "modules", "async_loading", "content", "approval", "project"];
   const preferred = status => priority.map(id => report.checks.find(check => check.id === id && check.status === status)).find(Boolean)
     || report.checks.find(check => check.status === status);
@@ -448,8 +567,8 @@ async function diagnoseProjectFill(message) {
   const filledTexts = slots.filter(slot => String(project.texts?.[slot.key] || "").trim()).length;
   diagnosticStep(checks, "project", "Projeto selecionado", project.id ? "ok" : "error",
     project.id ? `${project.asin || "Sem ASIN"} · ${filledTexts} de ${slots.length} textos com conteúdo.` : "Nenhum projeto foi selecionado no Studio.");
-  diagnosticStep(checks, "approval", "Aprovação do projeto", project.approved && project.status === "approved" ? "ok" : "warning",
-    project.approved && project.status === "approved" ? "Projeto aprovado para preenchimento." : "O diagnóstico pode continuar, mas é necessário aprovar o projeto antes de preencher.");
+  diagnosticStep(checks, "approval", "Aprovação do projeto", project.approved ? "ok" : "warning",
+    project.approved ? `Projeto aprovado para preenchimento (${PROJECT_STATUS[project.status] || project.status || "sem status"}).` : "O diagnóstico pode continuar, mas é necessário aprovar o projeto antes de preencher.");
   diagnosticStep(checks, "content", "Textos disponíveis", filledTexts ? "ok" : "error",
     filledTexts ? `${filledTexts} campo(s) possuem texto salvo.` : "Gere ou informe os textos A+ antes do preenchimento.");
 
@@ -502,6 +621,38 @@ async function diagnoseProjectFill(message) {
   report.metrics.moduleCounts = pageReport.moduleCounts || {};
   report.warnings = Array.isArray(pageReport.warnings) ? pageReport.warnings.slice(0, 30) : [];
 
+  if (pageReport.recoveredOperation) {
+    const recovered = pageReport.recoveredOperation;
+    diagnosticStep(checks, "operation_recovery", "Recuperação automática", "ok",
+      `Uma tentativa abandonada foi liberada automaticamente após ${Math.max(1, Math.round(Number(recovered.idleMs || 0) / 1000))} segundo(s) sem resposta.`);
+  }
+  if (pageReport.operation) {
+    const current = Number(pageReport.operation.current || 0), total = Number(pageReport.operation.total || 0);
+    const progress = total ? `${current} de ${total}` : "andamento não informado";
+    const label = pageReport.operation.label ? ` Campo atual: ${pageReport.operation.label}.` : "";
+    diagnosticStep(checks, "page_operation", "Operação do editor", "warning",
+      `Há um preenchimento realmente em execução (${progress}; ${Math.max(1, Math.round(Number(pageReport.operation.elapsedMs || 0) / 1000))} segundo(s)).${label} Aguarde terminar ou use Cancelar.`);
+  } else {
+    diagnosticStep(checks, "page_operation", "Operação do editor", "ok", "Nenhum preenchimento ficou preso no conector da página.");
+  }
+
+  if (!pageReport.operation) {
+    try {
+      const bridgeProbe = await withNativeWriteLease(target, authorization => page(target, "probeWrite",
+        {writeToken: authorization.token, attemptId: authorization.attemptId}));
+      report.bridgeProbe = bridgeProbe;
+      diagnosticStep(checks, "write_bridge", "Ponte de escrita segura", bridgeProbe?.ok ? "ok" : "error",
+        bridgeProbe?.ok
+          ? `[${bridgeProbe.code || "BRIDGE_PROBE_OK"}] Autorização, aba e documento foram validados sem alterar nenhum campo.`
+          : `[${bridgeProbe?.code || "BRIDGE_PROBE_FAILED"}] ${bridgeProbe?.error || "A ponte de escrita não respondeu como esperado."}`);
+    } catch (error) {
+      diagnosticStep(checks, "write_bridge", "Ponte de escrita segura", "error", `[BRIDGE_PROBE_EXCEPTION] ${error.message}`);
+    }
+  } else {
+    diagnosticStep(checks, "write_bridge", "Ponte de escrita segura", "warning",
+      "[BRIDGE_PROBE_SKIPPED_BUSY] O teste sem escrita foi adiado porque já existe uma operação ativa.");
+  }
+
   diagnosticStep(checks, "page_version", "Versão na página", pageReport.version === report.version ? "ok" : "error",
     pageReport.version === report.version ? `Conector ${pageReport.version} confirmado.` : `A página respondeu com ${pageReport.version || "versão desconhecida"}; a extensão instalada é ${report.version}.`);
   diagnosticStep(checks, "amazon_access", "Login e verificação da Amazon", pageReport.loginRequired || pageReport.verificationRequired ? "error" : "ok",
@@ -515,10 +666,10 @@ async function diagnoseProjectFill(message) {
   for (const [key, label] of [["four", "quatro imagens"], ["two", "duas imagens"], ["faq", "FAQ"], ["specs", "especificações"]])
     if (counts[key] !== 1) missing.push(`${label}: ${counts[key] || 0}/1`);
   diagnosticStep(checks, "modules", "Estrutura dos módulos", missing.length ? "warning" : "ok",
-    missing.length ? `Estrutura esperada ainda não está completa (${missing.join("; ")}). Adicione ou expanda os módulos que pretende preencher.` : "Os seis módulos esperados foram encontrados.");
+    missing.length ? `Estrutura esperada ainda não está completa (${missing.join("; ")}). Se os módulos estão visíveis, aguarde alguns segundos e execute novamente; se persistir, use Mapear campos para os campos não reconhecidos.` : "Os seis módulos esperados foram encontrados.");
   diagnosticStep(checks, "fields", "Campos reconhecidos", pageReport.foundFields === pageReport.expectedFields ? "ok" : pageReport.foundFields ? "warning" : "error",
     pageReport.foundFields === pageReport.expectedFields ? `${pageReport.foundFields} de ${pageReport.expectedFields} campos reconhecidos.` :
-      pageReport.foundFields ? `${pageReport.foundFields} de ${pageReport.expectedFields} campos reconhecidos. Expanda os módulos; se persistir, use Mapear campos.` : "Nenhum campo A+ foi reconhecido. Aguarde o editor terminar, expanda os módulos e confira se a Amazon os renderizou.");
+      pageReport.foundFields ? `${pageReport.foundFields} de ${pageReport.expectedFields} campos reconhecidos. Se os módulos estão visíveis, aguarde a Amazon estabilizar; se persistir, use Mapear campos.` : "Nenhum campo A+ foi reconhecido. Aguarde o editor terminar e confira se a Amazon renderizou os campos.");
   if (pageReport.blockedFrames)
     diagnosticStep(checks, "frames", "Conteúdo incorporado", "warning", `${pageReport.blockedFrames} iframe(s) de outra origem não puderam ser lidos.`);
   if (pageReport.loadingIndicators)
@@ -532,8 +683,12 @@ async function inspect(target, cfg) {
   let slots = makeSlots(cfg);
   let scan = await page(target, "scan", {slots});
   // Um editor recém-aberto pode montar o formulário de forma assíncrona.
-  for (let i = 0; scan.candidates === 0 && i < 3; i++) {
-    await new Promise(resolve => setTimeout(resolve, 500));
+  for (let i = 0; i < 8; i++) {
+    const found = scan.entries.filter(entry => entry.found).length;
+    const modules = scan.moduleCounts || {};
+    const modulesReady = modules.full === 2 && modules.four >= 1 && modules.two >= 1 && modules.faq >= 1 && modules.specs >= 1;
+    if (scan.candidates > 0 && (found === slots.length || modulesReady)) break;
+    await new Promise(resolve => setTimeout(resolve, 400));
     scan = await page(target, "scan", {slots});
   }
   const resolved = {...cfg};
@@ -555,14 +710,17 @@ async function run(task, request) {
     const target = await connect(request.tabId); task.target = target;
     const cfg = settings(request.config);
     const inspected = await inspect(target, cfg);
-    if (inspected.scan.candidates === 0) throw new Error("Nenhum campo de texto acessível. Abra a edição do A+ e expanda os módulos antes de gerar.");
+    if (inspected.scan.candidates === 0) throw new Error("Nenhum campo de texto acessível. Abra a edição do A+, confirme que os módulos foram renderizados e tente novamente.");
     if (task.controller.signal.aborted) throw new Error("Operação cancelada.");
     await state({status: "generating", message: "Gerando textos em português…", target, ...inspected});
-    const generated = await routed(cfg.model,"texts",message=>state({message}).catch(()=>{}),(apiKey,model,onStage)=>generateTexts({apiKey,title:request.title.trim(),description:request.description.trim(),model,slots:inspected.slots,signal:task.controller.signal,onStage,onRateLimit:rateLimit=>state({rateLimit}).catch(()=>{})}));
+    const strategy = buildSalesStrategy({title: request.title, description: request.description, config: cfg});
+    const generated = await routed(cfg.model,"texts",message=>state({message}).catch(()=>{}),(apiKey,model,onStage)=>generateTexts({apiKey,title:request.title.trim(),description:request.description.trim(),model,slots:inspected.slots,strategy,signal:task.controller.signal,onStage,onRateLimit:rateLimit=>state({rateLimit}).catch(()=>{})}));
     if (task.controller.signal.aborted) throw new Error("Operação cancelada.");
     await state({status: "filling", message: "Textos validados. Preenchendo os campos identificados…", generated});
     await tabById(target.tabId, target.url);
-    const report = await page(target, "fill", {scanId: inspected.scan.scanId, slots: inspected.slots, texts: generated.texts});
+    const report = await withNativeWriteLease(target, authorization => page(target, "fill",
+      {scanId: inspected.scan.scanId, slots: inspected.slots, texts: textsForFill(inspected.slots, generated.texts),
+        writeToken: authorization.token, attemptId: authorization.attemptId}));
     const incomplete = report.results.some(r => !["filled", "same"].includes(r.status));
     await state({status: incomplete ? "partial" : "done", report,
       message: `${report.filled} de ${report.total} campos conferidos. ${incomplete ? "Veja os campos pendentes abaixo." : "Revise os módulos antes de salvar na Amazon."}`});
@@ -602,6 +760,60 @@ async function exclusive(callback) {
   try { return await callback(task); } finally { if (active === task) active = null; }
 }
 
+async function listingOperation(project, kind) {
+  if (intelligenceActive || projectActive || active || planningActive)
+    throw new Error("Aguarde a operação atual terminar.");
+  const task = {id: crypto.randomUUID(), controller: new AbortController()};
+  intelligenceActive = task;
+  const keepAlive = setInterval(() => chrome.runtime.getPlatformInfo().catch(() => {}), 20000);
+  try {
+    const workspace = project.listing;
+    const model = workspace.model || settings(project.config).model;
+    if (kind === "reviews") {
+      const requestData = reviewAnalyzerRequest({title: project.title, asin: project.asin,
+        reviews: workspace.draft.reviews, competitorReviews: workspace.draft.competitorReviews, returnNotes: workspace.draft.returnNotes});
+      if (!workspace.draft.reviews && !workspace.draft.competitorReviews && !workspace.draft.returnNotes)
+        throw new Error("Cole ao menos uma avaliação ou comentário de devolução para analisar.");
+      const reviewAnalysis = await routed(model, "analysis", () => {}, (apiKey, routedModel, onStage) =>
+        generateStructured({apiKey, title: project.title || project.asin, description: requestData.input,
+          model: routedModel, instructions: requestData.instructions, signal: task.controller.signal, onStage,
+          initialStage: "Analisando avaliações e causas de devolução…", initialOutputTokens: 4400,
+          validate: raw => {
+            const value = normalizeReviewAnalysis(raw, requestData.sampleSize), issues = [];
+            if (!value.summary.diagnosis) issues.push("summary.diagnosis está vazio.");
+            if (!value.themes.length && !value.return_triggers.length) issues.push("A análise não identificou temas nem gatilhos.");
+            return {value, issues};
+          }}));
+      project.listing = {...workspace, reviewAnalysis};
+    } else {
+      const reviewAnalysis = workspace.draft.useReviewAnalysis ? workspace.reviewAnalysis : null;
+      const requestData = listingOptimizerRequest({title: workspace.draft.title || project.title, asin: project.asin,
+        bullets: workspace.draft.bullets, description: workspace.draft.description,
+        facts: workspace.draft.facts || factualDescription(project), keywords: workspace.draft.keywords,
+        goal: workspace.draft.goal, reviewAnalysis});
+      if (!(workspace.draft.title || project.title) || ![workspace.draft.bullets, workspace.draft.description, workspace.draft.facts, factualDescription(project)].some(Boolean))
+        throw new Error("Informe o título e ao menos os bullets, a descrição ou os fatos confirmados.");
+      const listingOptimization = await routed(model, "analysis", () => {}, (apiKey, routedModel, onStage) =>
+        generateStructured({apiKey, title: workspace.draft.title || project.title, description: requestData.input,
+          model: routedModel, instructions: requestData.instructions, signal: task.controller.signal, onStage,
+          initialStage: "Otimizando o anúncio sem criar promessas…", initialOutputTokens: 5000,
+          validate: raw => {
+            const value = normalizeListingOptimization(raw), issues = [];
+            if (!value.optimized.title) issues.push("optimized.title está vazio.");
+            if (value.optimized.bullets.length !== 5) issues.push("optimized.bullets precisa conter exatamente 5 itens.");
+            if (!value.optimized.description) issues.push("optimized.description está vazia.");
+            return {value, issues};
+          }}));
+      project.listing = {...workspace, listingOptimization};
+    }
+    project.updatedAt = Date.now();
+    return upsertProject(project);
+  } finally {
+    clearInterval(keepAlive);
+    if (intelligenceActive === task) intelligenceActive = null;
+  }
+}
+
 async function handle(message) {
   await ready;
   switch (message.action) {
@@ -626,9 +838,9 @@ async function handle(message) {
       const cloud = isCloudKeyRecord(synced.encryptedStudioKey) ? synced.encryptedStudioKey : null;
       const apiKeys={...(saved.apiKeys||{})};if(saved.apiKey&&!apiKeys.gemini)apiKeys.gemini=saved.apiKey;
       const keyFingerprints={...(saved.keyFingerprints||{})};if(saved.keyFingerprint&&!keyFingerprints.gemini)keyFingerprints.gemini=saved.keyFingerprint;
-      const keyStates=Object.fromEntries(["gemini","kira","groq","deepseek"].map(provider=>[provider,{saved:!!apiKeys[provider],fingerprint:keyFingerprints[provider]||apiKeys[provider]?.slice(-4)||null}]));
+      const keyStates=Object.fromEntries(["openai","gemini","kira","groq","deepseek"].map(provider=>[provider,{saved:!!apiKeys[provider],fingerprint:keyFingerprints[provider]||apiKeys[provider]?.slice(-4)||null}]));
       const cloudRecords={...(synced.encryptedStudioKeys||{})};if(cloud&&!cloudRecords.gemini)cloudRecords.gemini=cloud;
-      const cloudKeyStates=Object.fromEntries(["gemini","kira","groq","deepseek"].map(provider=>[provider,{saved:!!isCloudKeyRecord(cloudRecords[provider]),fingerprint:cloudRecords[provider]?.fingerprint||null}]));
+      const cloudKeyStates=Object.fromEntries(["openai","gemini","kira","groq","deepseek"].map(provider=>[provider,{saved:!!isCloudKeyRecord(cloudRecords[provider]),fingerprint:cloudRecords[provider]?.fingerprint||null}]));
       const anyKey=Object.values(keyStates).find(item=>item.saved);
       return {job: saved.job || null, keySaved: !!anyKey, keyFingerprint: anyKey?.fingerprint || null,
         cloudKeySaved: !!cloud, cloudKeyFingerprint: cloud?.fingerprint || null,
@@ -640,13 +852,25 @@ async function handle(message) {
         projects: saved.projects || [], activeProjectId: saved.activeProjectId || "", projectJob: saved.projectJob || null};
     }
     case "draft": return saveDraft(message);
+    case "testKey": {
+      const apiKey = String(message.apiKey || "").trim();
+      const model = message.model || "gemini/gemini-3.5-flash";
+      const provider = providerForModel(model);
+      const result = await testApiKey({apiKey, model});
+      await chrome.storage.session.set({keyTestProof: {provider, digest: await keyProof(provider, apiKey), testedAt: Date.now()}});
+      return result;
+    }
     case "saveKey": {
       const apiKey = String(message.apiKey || "").trim();
       if (!apiKey || apiKey.length < 20 || apiKey.length > 1000 || /\s/.test(apiKey)) throw new Error("Cole uma API Key válida, sem espaços.");
       const provider=providerForModel(message.model||"gemini/gemini-3.5-flash");if(provider==="auto")throw new Error("Selecione um provedor para salvar a chave.");
+      const proof=(await chrome.storage.session.get("keyTestProof")).keyTestProof;
+      const validProof=proof?.provider===provider&&proof?.digest===await keyProof(provider,apiKey)&&Date.now()-Number(proof?.testedAt||0)<600000;
+      if(!validProof)throw new Error("Teste esta chave antes de salvar.");
       const old=await chrome.storage.local.get(["apiKeys","keyFingerprints"]),apiKeys={...(old.apiKeys||{}),[provider]:apiKey},keyFingerprints={...(old.keyFingerprints||{}),[provider]:apiKey.slice(-4)};
       const keyFingerprint = apiKey.slice(-4);
       await chrome.storage.local.set({apiKeys,keyFingerprints});
+      await chrome.storage.session.remove("keyTestProof");
       return {saved: true, fingerprint: keyFingerprint};
     }
     case "forgetKey": {const provider=providerForModel(message.model||"gemini/gemini-3.5-flash"),old=await chrome.storage.local.get(["apiKeys","keyFingerprints"]),apiKeys={...(old.apiKeys||{})},keyFingerprints={...(old.keyFingerprints||{})};delete apiKeys[provider];delete keyFingerprints[provider];await chrome.storage.local.set({apiKeys,keyFingerprints});if(provider==="gemini")await chrome.storage.local.remove(["apiKey","keyFingerprint"]);return{};}
@@ -656,6 +880,7 @@ async function handle(message) {
     case "start": return start(message);
     case "cancel": {
       active?.controller.abort();
+      await chrome.storage.session.remove(NATIVE_WRITE_LEASE_KEY);
       if (active?.target) await page(active.target, "cancel").catch(() => {});
       return {};
     }
@@ -679,7 +904,9 @@ async function handle(message) {
       if (task.controller.signal.aborted) throw new Error("Operação cancelada.");
       await state({status: "filling", message: "Preenchendo novamente com os textos já gerados…", scan, target});
       try {
-        const report = await page(target, "fill", {scanId: scan.scanId, slots: job.slots, texts: job.generated.texts});
+        const report = await withNativeWriteLease(target, authorization => page(target, "fill",
+          {scanId: scan.scanId, slots: job.slots, texts: textsForFill(job.slots, job.generated.texts),
+            writeToken: authorization.token, attemptId: authorization.attemptId}));
         await state({status: report.filled === report.total ? "done" : "partial", report,
           message: `${report.filled} de ${report.total} campos conferidos. Revise o relatório.`});
         return report;
@@ -687,7 +914,8 @@ async function handle(message) {
     });
     case "undo": return exclusive(async task => {
       const target = await connect(message.tabId); task.target = target;
-      const result = await page(target, "undo");
+      const result = await withNativeWriteLease(target, authorization => page(target, "undo",
+        {writeToken: authorization.token, attemptId: authorization.attemptId}));
       await state({status: "undone", message: `${result.restored} campos restaurados; ${result.skipped} preservados ou indisponíveis.`, report: null});
       return result;
     });
@@ -725,6 +953,26 @@ async function handle(message) {
       return {...result, projectJob: temporary.projectJob || null};
     }
     case "projectSave": return upsertProject(message.project || {});
+    case "listingAnalyze": return listingOperation(createProject(message.project || {}), "reviews");
+    case "listingOptimize": return listingOperation(createProject(message.project || {}), "optimizer");
+    case "listingCaptureReviews": {
+      const asin = normalizeAsin(message.asin);
+      if (!asin || !Number.isSafeInteger(message.tabId)) throw new Error("Abra as avaliações do produto antes de capturar.");
+      const tab = await chrome.tabs.get(message.tabId);
+      if (!matchesAmazonReviewURL(tab.url, asin)) throw new Error("A aba aberta não corresponde às avaliações do ASIN selecionado.");
+      const results = await chrome.scripting.executeScript({target:{tabId:tab.id},world:"ISOLATED",func:captureAmazonReviewPage});
+      const data = results[0]?.result;
+      if (!data?.count) throw new Error("Nenhuma avaliação visível foi encontrada. Aguarde a página carregar ou conclua a verificação da Amazon.");
+      return data;
+    }
+    case "listingClear": {
+      if (intelligenceActive) throw new Error("Aguarde a análise atual terminar.");
+      const project = createProject(message.project || {});
+      const target = message.target === "optimizer" ? "listingOptimization" : "reviewAnalysis";
+      project.listing = {...project.listing, [target]: null};
+      project.updatedAt = Date.now();
+      return upsertProject(project);
+    }
     case "projectSelect": {
       const saved = await readProjects();
       const id = String(message.id || "");
@@ -790,7 +1038,9 @@ async function handle(message) {
         if(!(project.approved&&Object.keys(project.texts||{}).length)){
           const drafted = await generateProjectDraft(project, task.controller.signal);Object.assign(project,drafted);await upsertProject(project);textsSaved=true;
         }
-        if(!(project.approved&&project.plan?.image_briefs?.length===8))project.plan=await routed(settings(project.config).model,"planning",()=>{},(apiKey,model,onStage)=>generatePlan({apiKey,title:project.title,description:factualDescription(project),model,signal:task.controller.signal,onStage}));
+        const strategy = buildSalesStrategy(project);
+        if(!(project.approved&&project.plan?.imageBriefs?.length===8))project.plan=await routed(settings(project.config).model,"planning",()=>{},(apiKey,model,onStage)=>generatePlan({apiKey,title:project.title,description:factualDescription(project),model,strategy,signal:task.controller.signal,onStage}));
+        if (project.plan) project.plan = {...project.plan, salesStrategy: compactSalesStrategy(strategy), categoryChecklist: strategy.checklist};
         project.updatedAt = Date.now();
         return upsertProject(project);
       } catch (error) {
@@ -810,7 +1060,8 @@ async function handle(message) {
       const selectedSlots = slots.filter(item => item.key === key || item.key === companionKey);
       const task = {controller: new AbortController()}; projectActive = task;
       try {
-        const generated = await routed(settings(project.config).model,"texts",()=>{},(apiKey,model,onStage)=>generateTexts({apiKey,title:project.title,description:factualDescription(project),model,slots:selectedSlots,signal:task.controller.signal,onStage}));
+        const strategy = buildSalesStrategy(project);
+        const generated = await routed(settings(project.config).model,"texts",()=>{},(apiKey,model,onStage)=>generateTexts({apiKey,title:project.title,description:factualDescription(project),model,slots:selectedSlots,strategy,signal:task.controller.signal,onStage}));
         project.texts = {...project.texts, ...generated.texts};
         const checked = validateProject(project); project.texts = checked.texts; project.notes = [...project.notes, ...generated.notes].slice(-30);
         project.quality = scoreAplus({slots, texts: project.texts, title: project.title, description: factualDescription(project)});
@@ -836,7 +1087,7 @@ async function handle(message) {
       const task = {controller: new AbortController()}; projectActive = task;
       try {
         const generated = await routed(settings(project.config).model, "texts", () => {}, (apiKey, model, onStage) => generateTexts({
-          apiKey, title: project.title, description, model, slots: selectedSlots, signal: task.controller.signal, onStage,
+          apiKey, title: project.title, description, model, slots: selectedSlots, strategy: buildSalesStrategy(project), signal: task.controller.signal, onStage,
           revisionPrompt: repetitionRevisionPrompt(project, slots, targetKeys, before)
         }));
         project.texts = {...project.texts, ...generated.texts};
@@ -851,17 +1102,64 @@ async function handle(message) {
       } finally { if (projectActive === task) projectActive = null; }
     }
     case "projectDiagnostic": return diagnoseProjectFill(message);
+    case "projectModuleRecordStart": {
+      const project = createProject(message.project || {});
+      const tab = await tabById(message.tabId);
+      if (!isAplusEditorURL(tab.url)) throw new Error("Abra a página exata de edição A+ Premium antes de iniciar o registro.");
+      const target = await connect(tab.id);
+      const slots = project.slots?.length ? project.slots : makeSlots(settings(project.config));
+      const result = await page(target, "moduleRecordStart", {slots});
+      await chrome.storage.session.set({moduleRecording: {tabId: target.tabId, documentId: target.documentId,
+        url: target.url, recordingId: result.id, startedAt: result.startedAt}});
+      return result;
+    }
+    case "projectModuleRecordStatus": {
+      const saved = await Promise.all([
+        chrome.storage.session.get("moduleRecording"), chrome.storage.local.get("lastModuleRecording")
+      ]);
+      const recording = saved[0].moduleRecording || null;
+      if (!recording?.tabId) return {recording: false, lastReport: saved[1].lastModuleRecording || null};
+      try {
+        const target = await connect(recording.tabId);
+        const current = await page(target, "moduleRecordStatus");
+        return {...current, tabId: recording.tabId, lastReport: saved[1].lastModuleRecording || null};
+      } catch (error) {
+        await chrome.storage.session.remove("moduleRecording");
+        return {recording: false, interrupted: true, error: error.message, lastReport: saved[1].lastModuleRecording || null};
+      }
+    }
+    case "projectModuleRecordStop": {
+      const saved = await chrome.storage.session.get("moduleRecording");
+      const tabId = Number.isSafeInteger(message.tabId) ? message.tabId : saved.moduleRecording?.tabId;
+      if (!Number.isSafeInteger(tabId)) throw new Error("Nenhum registro de montagem foi iniciado.");
+      const target = await connect(tabId);
+      const report = await page(target, "moduleRecordStop");
+      await chrome.storage.local.set({lastModuleRecording: report});
+      await chrome.storage.session.remove("moduleRecording");
+      return report;
+    }
+    case "projectPrepareModules": return exclusive(async task => {
+      const project = createProject(message.project || {});
+      const tab = await tabById(message.tabId);
+      if (!isAplusEditorURL(tab.url)) throw new Error("A aba selecionada não é o editor A+ Premium. Abra a página exata de edição antes de adicionar os módulos.");
+      const target = await connect(message.tabId); task.target = target;
+      const slots = project.slots?.length ? project.slots : makeSlots(settings(project.config));
+      return page(target, "prepareModules", {slots});
+    });
     case "projectFill": return exclusive(async task => {
       const project = createProject(message.project || {});
-      if (!project.approved || project.status !== "approved") throw new Error("Aprove o projeto antes de preencher a Amazon.");
+      if (!project.approved) throw new Error("Aprove o projeto antes de preencher a Amazon.");
       const tab = await tabById(message.tabId);
       if (!isAplusEditorURL(tab.url)) throw new Error("A aba selecionada não é o editor A+ Premium. Execute o diagnóstico para localizar a página correta.");
       const target = await connect(message.tabId); task.target = target;
       const inspected = await inspect(target, settings(project.config));
       const scan = await page(target, "scan", {slots: inspected.slots});
-      const texts = Object.fromEntries(inspected.slots.map(slot => [slot.key, String(project.texts[slot.key] || "")]));
-      const report = await page(target, "fill", {scanId: scan.scanId, slots: inspected.slots, texts});
-      project.status = "filled"; project.updatedAt = Date.now(); project.approved = true;
+      const texts = textsForFill(inspected.slots, project.texts);
+      const report = await withNativeWriteLease(target, authorization => page(target, "fill",
+        {scanId: scan.scanId, slots: inspected.slots, texts, writeToken: authorization.token,
+          attemptId: authorization.attemptId}));
+      const confirmed = Array.isArray(report.results) ? report.results.filter(row => row.status === "filled" || row.status === "same").length : Number(report.filled || 0);
+      project.status = confirmed ? "filled" : "approved"; project.updatedAt = Date.now(); project.approved = true; project.fillReport = report;
       await upsertProject(project);
       return report;
     });
@@ -886,20 +1184,44 @@ chrome.runtime.onConnect?.addListener(port => {
 });
 
 chrome.runtime.onMessage.addListener((message, sender, reply) => {
+  if (message?.channel === "aplus-native-write-probe") {
+    (async () => {
+      const validation = await validateNativeBridge(message, sender);
+      if (!validation.ok) { reply(validation); return; }
+      reply({ok: true, data: {ok: true, code: "BRIDGE_PROBE_OK",
+        diagnostic: {...validation.diagnostic, code: "BRIDGE_PROBE_OK"}}});
+    })().catch(error => reply(bridgeFailure("BRIDGE_PROBE_EXCEPTION",
+      String(error?.message || "Não foi possível testar a ponte de escrita."), {message, sender, lease: null})));
+    return true;
+  }
   if (message?.channel === "aplus-native-write") {
-    // Apenas o content script da operação ativa pode solicitar esta função fixa.
-    const target = active?.target;
-    if (sender.id !== chrome.runtime.id || !sender.tab || !target || active.controller.signal.aborted ||
-      sender.tab.id !== target.tabId || sender.documentId !== target.documentId ||
-      sender.url !== target.url || message.href !== target.url || !isSellerURL(sender.url) ||
-      !/^[a-f0-9-]{36}$/.test(message.marker) || typeof message.value !== "string" ||
-      message.value.length > 20000 || typeof message.expectedBefore !== "string") {
-      reply({ok: false, error: "Escrita fora da operação ou do documento ativo."}); return;
-    }
-    chrome.scripting.executeScript({target: {tabId: target.tabId, documentIds: [target.documentId]}, world: "MAIN",
-      func: writeAmazonField, args: [message.marker, message.value, message.expectedBefore, target.url]})
-      .then(results => reply({ok: true, data: results[0]?.result || {written: false}}),
-        () => reply({ok: false, error: "O componente da Amazon não aceitou a escrita."}));
+    // A autorização fica na sessão do Chrome durante a operação. Ela continua
+    // válida se o service worker for reiniciado, mas permanece presa à aba,
+    // ao documento e a um token aleatório que a página da Amazon não conhece.
+    (async () => {
+      const validation = await validateNativeBridge(message, sender, {requiresField: true});
+      if (!validation.ok) { reply(validation); return; }
+      const {lease, documentId} = validation;
+      // O documentId informado pelo próprio remetente é a referência mais
+      // atual. Em navegações internas da Amazon, o id obtido no primeiro ping
+      // pode ficar defasado mesmo que o content script correto continue ativo.
+      let answered = false;
+      let timer;
+      const finish = value => { if (answered) return; answered = true; clearTimeout(timer); reply(value); };
+      timer = setTimeout(() => finish(bridgeFailure("BRIDGE_MAIN_TIMEOUT",
+        "O componente da Amazon não respondeu em 12 segundos; o campo foi liberado para continuar.",
+        {message, sender, lease})), 12000);
+      chrome.scripting.executeScript({target: {tabId: lease.tabId, documentIds: [documentId]}, world: "MAIN",
+        func: writeAmazonField, args: [message.marker, message.value, message.expectedBefore, message.href]})
+        .then(results => {
+          const result = results[0]?.result || {written: false, method: "main-world", reason: "resultado ausente"};
+          const code = result.written ? "BRIDGE_WRITE_OK" : `WRITER_${String(result.method || "unknown").toUpperCase().replace(/[^A-Z0-9]+/g, "_")}_REJECTED`;
+          finish({ok: true, data: {...result, code,
+            diagnostic: {...validation.diagnostic, code, writerMethod: result.method || "unknown"}}});
+        }, error => finish(bridgeFailure("BRIDGE_MAIN_EXECUTION_ERROR",
+          String(error?.message || "O componente da Amazon não aceitou a escrita."), {message, sender, lease})));
+    })().catch(error => reply(bridgeFailure("BRIDGE_VALIDATION_EXCEPTION",
+      String(error?.message || "Não foi possível validar a autorização de escrita."), {message, sender, lease: null})));
     return true;
   }
   // O painel é uma página confiável da extensão aberta em uma aba e possui

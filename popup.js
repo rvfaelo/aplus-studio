@@ -7,6 +7,7 @@ const $ = id => document.getElementById(id);
 let latest = null, locked = false, renderedVersion = "", savedKey = false, pollTimer;
 let initialized = false, keyBusy = false, draftRevision = 0, rateLimitTimer;
 let replaceMode = false, savedFingerprint = null;
+let testedKeyCandidate = "";
 let cloudKeySaved = false, cloudKeyFingerprint = null;
 let keyStates={},cloudKeyStates={};
 let auditLatest = null, auditItems = [], auditLocked = false;
@@ -14,9 +15,9 @@ let planningLatest = null, planResult = null, qualityResult = null, planningLock
 const editableFields = ["title", "description", "model", "customModel", "faqCount", "specCount", "apiKey", "cloudPassphrase"];
 const MODEL_MIGRATIONS = Object.freeze({"gemini/gemini-2.5-flash":"gemini/gemini-3.5-flash","gemini/gemini-2.5-flash-lite":"gemini/gemini-3.5-flash-lite","tokenrouter/z-ai/glm-5.3-free":"kira/glm-5.3-free"});
 const selectedModel = () => $("model").value === "custom" ? $("customModel").value.trim() : $("model").value;
-const providerModel=()=>({gemini:"gemini/gemini-3.5-flash",kira:"kira/qwen3.8-flash",groq:"openai/gpt-oss-20b",deepseek:"deepseek/deepseek-flash"})[$("keyProvider").value];
+const providerModel=()=>({openai:"openai-api/gpt-5.6-luna",gemini:"gemini/gemini-3.5-flash",kira:"kira/qwen3.8-flash",groq:"openai/gpt-oss-20b",deepseek:"deepseek/deepseek-flash"})[$("keyProvider").value];
 const selectedProvider=()=>providerForModel(selectedModel())==="auto"?"gemini":providerForModel(selectedModel());
-const selectProviderState=()=>{const provider=$("keyProvider").value,local=keyStates[provider]||{} ,cloud=cloudKeyStates[provider]||{};replaceMode=false;keyState(!!local.saved,local.fingerprint);cloudKeyState(!!cloud.saved,cloud.fingerprint);};
+const selectProviderState=()=>{const provider=$("keyProvider").value,local=keyStates[provider]||{} ,cloud=cloudKeyStates[provider]||{};replaceMode=false;resetKeyTest();keyState(!!local.saved,local.fingerprint);cloudKeyState(!!cloud.saved,cloud.fingerprint);};
 const rawConfig = () => ({model: selectedModel(), faqCount: Number($("faqCount").value), specCount: Number($("specCount").value)});
 $("openDashboard").onclick = async () => { await chrome.tabs.create({url: chrome.runtime.getURL("dashboard.html")}); window.close(); };
 const config = () => {
@@ -34,6 +35,18 @@ async function tabId() {
   return tab.id;
 }
 function status(message, kind = "") { $("status").textContent = message; $("statusBox").className = `status-box ${kind}`; }
+const currentKeyCandidate = () => `${$("keyProvider").value}:${$("apiKey").value.trim()}`;
+function resetKeyTest(message = "Teste obrigatório antes de salvar. O teste não gera conteúdo.") {
+  testedKeyCandidate = "";
+  $("keyTestStatus").textContent = message;
+  syncKeyTestButtons();
+}
+function syncKeyTestButtons() {
+  const blocked = locked || keyBusy || !initialized;
+  const hasKey = $("apiKey").value.trim().length > 0;
+  $("testKey").disabled = blocked || !hasKey;
+  $("applyKey").disabled = blocked || !hasKey || testedKeyCandidate !== currentKeyCandidate();
+}
 function renderDiagnostic(diagnostic) {
   $("apiDiagnostic").hidden = !diagnostic;
   $("apiDiagnostic").open = !!diagnostic;
@@ -69,10 +82,11 @@ function renderRateLimit(rateLimit) {
 }
 function busy(value) {
   locked = value;
-  for (const id of ["generate", "scan", "map", "refill", "undo", "forgetKey", "applyKey", "replaceKey", "cancelReplace"])
+  for (const id of ["generate", "scan", "map", "refill", "undo", "forgetKey", "replaceKey", "cancelReplace"])
     $(id).disabled = value || !initialized || keyBusy;
   $("apiKey").disabled = !initialized || keyBusy || value;
   $("cancel").hidden = !value;
+  syncKeyTestButtons();
   for (const id of ["auditCapture", "auditClear", "auditRun"])
     $(id).disabled = value || auditLocked || !initialized;
   for (const id of ["planningRun", "qualityRun", "planningClear"])
@@ -229,14 +243,17 @@ function keyState(has, fingerprint, initial = false) {
     $("keyMask").textContent = "•".repeat(12) + (savedFingerprint || "");
     $("keyHint").textContent = "Chave aplicada neste navegador. Use Substituir para trocá-la ou Remover para apagá-la.";
   } else if (has) {
-    $("keyHint").textContent = "Cole a nova chave do provedor selecionado e clique em Aplicar nova chave.";
+    $("keyHint").textContent = "Cole a nova chave, teste a conexão e salve somente após a confirmação.";
     $("cancelReplace").hidden = false;
-    $("applyKey").textContent = "Aplicar nova chave";
+    $("applyKey").textContent = "Salvar chave testada";
   } else {
-    $("keyHint").textContent = "Cole a chave do provedor selecionado e clique em Aplicar e salvar chave.";
+    $("keyHint").textContent = $("keyProvider").value === "openai"
+      ? "Use uma chave da plataforma OpenAI com faturamento próprio. A assinatura ChatGPT Plus não inclui créditos de API."
+      : "Cole a chave do provedor, teste a conexão e salve somente após a confirmação.";
     $("cancelReplace").hidden = true;
-    $("applyKey").textContent = "Aplicar e salvar chave";
+    $("applyKey").textContent = "Salvar chave testada";
   }
+  syncKeyTestButtons();
   if (initial && !has) $("keySettings").open = true;
 }
 function paragraph(parent, text) { const p = document.createElement("p"); p.textContent = text; parent.append(p); return p; }
@@ -331,7 +348,7 @@ async function refresh(initial = false) {
 
 $("form").addEventListener("submit", async event => {
   event.preventDefault(); if (locked || !initialized || keyBusy) return;
-  if ($("apiKey").value.trim()) { status("Aplique a chave digitada antes de gerar. Clique em Aplicar e salvar chave.", "error"); $("apiKey").focus(); return; }
+  if ($("apiKey").value.trim()) { status("Teste e salve a chave digitada antes de gerar.", "error"); $("apiKey").focus(); return; }
   if (!(selectedModel()==="auto/economico"?Object.values(keyStates).some(item=>item.saved):savedKey)) { status("Cadastre a API Key necessária antes de gerar.", "error"); $("keySettings").open = true; return; }
   clearTimeout(pollTimer); busy(true); renderDiagnostic(null); status("Iniciando…", "busy");
   try {
@@ -364,13 +381,28 @@ $("applyKey").onclick = async () => {
   if (locked || !initialized || keyBusy) return;
   keyBusy = true; busy(false);
   try {
+    if (testedKeyCandidate !== currentKeyCandidate()) throw new Error("Teste esta chave antes de salvar.");
     const result = await send("saveKey", {apiKey: $("apiKey").value,model:providerModel()});
     $("apiKey").value = ""; $("apiKey").type = "password"; $("toggleKey").textContent = "Mostrar";
-    replaceMode = false;
+    replaceMode = false; testedKeyCandidate = "";
     keyState(true, result.fingerprint);
     keyStates[$("keyProvider").value]={saved:true,fingerprint:result.fingerprint};
     status("API Key aplicada e salva neste navegador.");
   } catch (error) { status(error.message, "error"); }
+  finally { keyBusy = false; busy(locked); }
+};
+$("testKey").onclick = async () => {
+  if (locked || !initialized || keyBusy || !$("apiKey").value.trim()) return;
+  keyBusy = true; busy(false); $("keyTestStatus").textContent = "Testando autenticação e acesso ao modelo…";
+  try {
+    const candidate = currentKeyCandidate();
+    const result = await send("testKey", {apiKey: $("apiKey").value, model: providerModel()});
+    testedKeyCandidate = candidate;
+    $("keyTestStatus").textContent = result.modelAvailable
+      ? `Chave válida. O modelo ${result.model} está disponível. Agora você pode salvar.`
+      : `Chave válida, mas o modelo ${result.model} não apareceu na conta. Você pode salvar, porém escolha outro modelo se a geração falhar.`;
+    status("Chave testada com sucesso. Clique em Salvar chave testada.");
+  } catch (error) { testedKeyCandidate = ""; $("keyTestStatus").textContent = error.message; status(error.message, "error"); }
   finally { keyBusy = false; busy(locked); }
 };
 $("forgetKey").onclick = async () => {
@@ -388,6 +420,7 @@ $("forgetKey").onclick = async () => {
 $("replaceKey").onclick = () => {
   if (locked || !initialized || keyBusy) return;
   replaceMode = true;
+  resetKeyTest();
   $("apiKey").value = "";
   $("apiKey").type = "password"; $("toggleKey").textContent = "Mostrar";
   keyState(savedKey, savedFingerprint);
@@ -396,10 +429,11 @@ $("replaceKey").onclick = () => {
 $("cancelReplace").onclick = () => {
   if (locked || !initialized || keyBusy) return;
   replaceMode = false;
+  resetKeyTest();
   $("apiKey").value = "";
   keyState(savedKey, savedFingerprint);
 };
-$("apiKey").addEventListener("input", () => keyState(savedKey, savedFingerprint));
+$("apiKey").addEventListener("input", () => { resetKeyTest(); keyState(savedKey, savedFingerprint); });
 
 async function performCloudKey(action) {
   if(locked||!initialized||keyBusy)return; const passphrase=$("cloudPassphrase").value;

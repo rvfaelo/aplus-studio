@@ -36,6 +36,10 @@
       <label for="model">Modelo de IA</label>
       <select id="model" disabled>
         <option value="auto/economico">Automático econômico (recomendado)</option>
+        <option value="divider-openai" disabled>── OpenAI API oficial ──</option>
+        <option value="openai-api/gpt-5.6-luna">GPT-5.6 Luna (econômico e estável)</option>
+        <option value="openai-api/gpt-5.6-terra">GPT-5.6 Terra (mais qualidade)</option>
+        <option value="openai-api/gpt-5.6-sol">GPT-5.6 Sol (qualidade máxima)</option>
         <option value="divider-kira" disabled>── KiraAI ──</option>
         <option value="kira/qwen3.8-flash">Qwen 3.8 Flash (KiraAI)</option>
         <option value="kira/glm-5.3-free">GLM 5.3 Free (KiraAI)</option>
@@ -47,6 +51,8 @@
         <option value="openai/gpt-oss-120b">GPT-OSS 120B (maior qualidade)</option>
         <option value="qwen/qwen3.8-27b">Qwen 3.8 27B (muito bom)</option>
         <option value="qwen/qwen3.6-27b">Qwen 3.6 27B</option>
+        <option value="llama-3.1-8b-instant">Llama 3.1 8B Instant</option>
+        <option value="llama-3.3-70b-versatile">Llama 3.3 70B Versatile</option>
         <option value="divider-deepseek" disabled>── DeepSeek ──</option>
         <option value="deepseek/deepseek-flash">DeepSeek Flash (API oficial, paga)</option>
         <option value="custom">Outro modelo</option>
@@ -82,7 +88,7 @@
         </summary>
         <div class="key-body">
           <label for="keyProvider">Chave que deseja configurar</label>
-          <select id="keyProvider"><option value="gemini">Google Gemini</option><option value="kira">KiraAI.vn</option><option value="groq">Groq</option><option value="deepseek">DeepSeek</option></select>
+          <select id="keyProvider"><option value="openai">OpenAI API oficial</option><option value="gemini">Google Gemini</option><option value="kira">KiraAI.vn</option><option value="groq">Groq</option><option value="deepseek">DeepSeek</option></select>
           <p class="hint" id="keyHint" aria-live="polite">Para Gemini, use a chave gratuita criada no Google AI Studio.</p>
 
           <div id="keySavedView" class="key-saved-view" hidden>
@@ -100,7 +106,8 @@
               <input id="apiKey" name="apiKey" type="password" autocomplete="off" spellcheck="false" maxlength="1000" placeholder="Cole sua API Key" aria-label="API Key do modelo selecionado">
               <button id="toggleKey" type="button" aria-label="Mostrar chave">Mostrar</button>
             </div>
-            <button id="applyKey" class="secondary" type="button">Aplicar e salvar chave</button>
+            <div class="key-validation-actions"><button id="testKey" type="button">Testar chave</button><button id="applyKey" class="secondary" type="button" disabled>Salvar chave testada</button></div>
+            <p id="keyTestStatus" class="hint" aria-live="polite">Teste obrigatório antes de salvar. O teste não gera conteúdo.</p>
             <button id="cancelReplace" class="text-button" type="button" hidden>Cancelar</button>
           </div>
           <div class="cloud-key">
@@ -240,7 +247,7 @@
     </details>
 
     <footer>
-      <a href="#" id="openChangelog" class="version-link">Versão 1.5.3</a> — revisão de repetição corrigida e botão de correção seletiva com IA.<br>
+      <a href="#" id="openChangelog" class="version-link">Versão 1.5.13</a> — montagem automática e registro sem cliques inúteis.<br>
       Os campos identificados serão substituídos. Revise antes de salvar na Amazon.
     </footer>
   </main>
