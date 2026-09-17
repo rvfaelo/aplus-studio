@@ -8,7 +8,7 @@ import {isPanelSender} from "./panel-connection.js";
 import {captureProductPage, matchesProductURL} from "./product-page.js";
 import {encryptApiKey, decryptApiKey, isCloudKeyRecord} from "./key-sync.js";
 import {providerForModel, routesFor} from "./providers.js";
-import {buildSalesStrategy, compactSalesStrategy} from "./strategy.js";
+import {antiReturnQualityIssues, buildSalesStrategy, compactSalesStrategy} from "./strategy.js";
 import {captureAmazonReviewPage, listingOptimizerRequest, matchesAmazonReviewURL,
   normalizeListingOptimization, normalizeReviewAnalysis, reviewAnalyzerRequest} from "./listing-intelligence.js";
 
@@ -29,8 +29,18 @@ let draftQueue = Promise.resolve();
 const activeStates = new Set(["scanning", "generating", "filling"]);
 const auditActiveStates = new Set(["queued", "checking"]);
 const planningActiveStates = new Set(["planning"]);
-const EXTENSION_VERSION = chrome.runtime.getManifest?.().version || "1.5.13";
+const EXTENSION_VERSION = chrome.runtime.getManifest?.().version || "1.5.16";
 const PAGE_CHANNEL = `aplus-page-v${EXTENSION_VERSION}`;
+
+function scoreProjectQuality(project, {slots = project.slots?.length ? project.slots : makeSlots(project.config),
+  texts = project.texts || {}, description = factualDescription(project)} = {}) {
+  const quality = scoreAplus({slots, texts, title: project.title, description});
+  const antiReturnIssues = antiReturnQualityIssues({...project, slots, texts});
+  quality.antiReturnIssues = antiReturnIssues;
+  quality.issues = [...new Set([...(quality.issues || []), ...antiReturnIssues])];
+  if (antiReturnIssues.length) quality.score = Math.max(0, Number(quality.score || 0) - Math.min(16, antiReturnIssues.length * 4));
+  return quality;
+}
 
 async function providerKeys(model) {
   const saved=await chrome.storage.local.get(["apiKeys","apiKey"]), keys={...(saved.apiKeys||{})};
@@ -105,7 +115,7 @@ async function generateProjectDraft(project, signal, onStage = () => {}) {
   const strategy = buildSalesStrategy(next);
   const generated = await routed(cfg.model,"texts",onStage,(apiKey,model,routedStage)=>generateTexts({apiKey,title:next.title,description,model,slots,strategy,signal,onStage:routedStage}));
   next.slots = slots; next.texts = generated.texts; next.notes = generated.notes;
-  next.quality = scoreAplus({slots, texts: next.texts, title: next.title, description});
+  next.quality = scoreProjectQuality(next, {slots, texts: next.texts, description});
   next.approved = false; next.status = "review"; next.fillReport = null; next.error = ""; next.updatedAt = Date.now();
   return next;
 }
@@ -838,9 +848,9 @@ async function handle(message) {
       const cloud = isCloudKeyRecord(synced.encryptedStudioKey) ? synced.encryptedStudioKey : null;
       const apiKeys={...(saved.apiKeys||{})};if(saved.apiKey&&!apiKeys.gemini)apiKeys.gemini=saved.apiKey;
       const keyFingerprints={...(saved.keyFingerprints||{})};if(saved.keyFingerprint&&!keyFingerprints.gemini)keyFingerprints.gemini=saved.keyFingerprint;
-      const keyStates=Object.fromEntries(["openai","gemini","kira","groq","deepseek"].map(provider=>[provider,{saved:!!apiKeys[provider],fingerprint:keyFingerprints[provider]||apiKeys[provider]?.slice(-4)||null}]));
+      const keyStates=Object.fromEntries(["openai","gemini","kira","groq","xkiro"].map(provider=>[provider,{saved:!!apiKeys[provider],fingerprint:keyFingerprints[provider]||apiKeys[provider]?.slice(-4)||null}]));
       const cloudRecords={...(synced.encryptedStudioKeys||{})};if(cloud&&!cloudRecords.gemini)cloudRecords.gemini=cloud;
-      const cloudKeyStates=Object.fromEntries(["openai","gemini","kira","groq","deepseek"].map(provider=>[provider,{saved:!!isCloudKeyRecord(cloudRecords[provider]),fingerprint:cloudRecords[provider]?.fingerprint||null}]));
+      const cloudKeyStates=Object.fromEntries(["openai","gemini","kira","groq","xkiro"].map(provider=>[provider,{saved:!!isCloudKeyRecord(cloudRecords[provider]),fingerprint:cloudRecords[provider]?.fingerprint||null}]));
       const anyKey=Object.values(keyStates).find(item=>item.saved);
       return {job: saved.job || null, keySaved: !!anyKey, keyFingerprint: anyKey?.fingerprint || null,
         cloudKeySaved: !!cloud, cloudKeyFingerprint: cloud?.fingerprint || null,
@@ -1012,15 +1022,13 @@ async function handle(message) {
     case "projectValidate": {
       const project = createProject(message.project || {});
       const checked = validateProject(project);
-      const quality = scoreAplus({slots: project.slots?.length ? project.slots : makeSlots(project.config), texts: checked.texts,
-        title: project.title, description: factualDescription(project)});
+      const quality = scoreProjectQuality(project, {texts: checked.texts});
       return {...checked, quality};
     }
     case "projectApprove": {
       const project = createProject(message.project || {});
       const checked = validateProject(project);
-      const quality = scoreAplus({slots: project.slots?.length ? project.slots : makeSlots(project.config), texts: checked.texts,
-        title: project.title, description: factualDescription(project)});
+      const quality = scoreProjectQuality(project, {texts: checked.texts});
       const blocking = checked.warnings.filter(item => !item.startsWith("Há apenas"));
       if (blocking.length) throw new Error(`Corrija antes de aprovar: ${blocking[0]}`);
       project.texts = checked.texts; project.notes = checked.notes; project.quality = quality;
@@ -1041,6 +1049,7 @@ async function handle(message) {
         const strategy = buildSalesStrategy(project);
         if(!(project.approved&&project.plan?.imageBriefs?.length===8))project.plan=await routed(settings(project.config).model,"planning",()=>{},(apiKey,model,onStage)=>generatePlan({apiKey,title:project.title,description:factualDescription(project),model,strategy,signal:task.controller.signal,onStage}));
         if (project.plan) project.plan = {...project.plan, salesStrategy: compactSalesStrategy(strategy), categoryChecklist: strategy.checklist};
+        project.quality = scoreProjectQuality(project);
         project.updatedAt = Date.now();
         return upsertProject(project);
       } catch (error) {
@@ -1064,7 +1073,7 @@ async function handle(message) {
         const generated = await routed(settings(project.config).model,"texts",()=>{},(apiKey,model,onStage)=>generateTexts({apiKey,title:project.title,description:factualDescription(project),model,slots:selectedSlots,strategy,signal:task.controller.signal,onStage}));
         project.texts = {...project.texts, ...generated.texts};
         const checked = validateProject(project); project.texts = checked.texts; project.notes = [...project.notes, ...generated.notes].slice(-30);
-        project.quality = scoreAplus({slots, texts: project.texts, title: project.title, description: factualDescription(project)});
+        project.quality = scoreProjectQuality(project, {slots});
         project.approved = false; project.status = "review"; project.updatedAt = Date.now();
         return upsertProject(project);
       } finally { if (projectActive === task) projectActive = null; }
@@ -1074,7 +1083,7 @@ async function handle(message) {
       const project = createProject(message.project || {});
       const slots = project.slots?.length ? project.slots : makeSlots(project.config);
       const description = factualDescription(project);
-      const before = scoreAplus({slots, texts: project.texts, title: project.title, description});
+      const before = scoreProjectQuality(project, {slots, description});
       const targetKeys = (before.repetitionTargets || []).filter(key => slots.some(slot => slot.key === key));
       if (!targetKeys.length) {
         const checked = validateProject(project);
@@ -1094,7 +1103,7 @@ async function handle(message) {
         project.notes = [...project.notes, ...generated.notes].slice(-30);
         const checked = validateProject(project);
         project.texts = checked.texts; project.notes = checked.notes; project.validationWarnings = checked.warnings;
-        project.quality = scoreAplus({slots, texts: project.texts, title: project.title, description});
+        project.quality = scoreProjectQuality(project, {slots, description});
         project.approved = false; project.status = "review"; project.updatedAt = Date.now();
         const saved = await upsertProject(project);
         return {...saved, corrected: targetKeys.length, before: before.repetitions.length,

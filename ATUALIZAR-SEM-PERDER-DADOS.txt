@@ -1,0 +1,11 @@
+A+ Studio 1.5.15
+
+1. Extraia o ZIP.
+2. Substitua os arquivos na MESMA pasta da extensão já instalada.
+3. Em chrome://extensions, clique em Recarregar no A+ Studio.
+4. Feche o Studio antigo e abra novamente pelo ícone da extensão.
+5. Recarregue a página da Amazon antes de usar preenchimento.
+
+Não remova a extensão nem limpe o armazenamento: os projetos e chaves ficam salvos localmente na instalação existente.
+
+O novo layout preserva os fluxos existentes. Testes locais passaram; a conta real da Amazon não foi usada na verificação.

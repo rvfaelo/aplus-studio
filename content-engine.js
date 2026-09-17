@@ -2,7 +2,7 @@
 // Prioriza os data-module-id/data-component-id informados pelo usuário.
 // As heurísticas ficam como fallback para módulos sem esses identificadores.
 (() => {
-  const engineVersion = globalThis.chrome?.runtime?.getManifest?.().version || "1.5.13";
+  const engineVersion = globalThis.chrome?.runtime?.getManifest?.().version || "1.5.15";
   if (globalThis.APlusEngine?.version === engineVersion) return;
   const KAT = 'kat-input,kat-textarea';
   const FIELD = `${KAT},input,textarea,[contenteditable="true"],[contenteditable="plaintext-only"],[role="textbox"]`;

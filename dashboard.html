@@ -3,31 +3,37 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>A+ Studio 1.5.13</title>
+  <title>A+ Studio 1.5.15</title>
   <link rel="stylesheet" href="dashboard.css">
+  <link rel="stylesheet" href="studio-ui.css">
+  <script defer src="studio-ui.js"></script>
   <script type="module" src="dashboard.js"></script>
 </head>
-<body>
+<body class="studio-dashboard">
+  <a class="skip-link" href="#mainContent">Pular para o conteúdo</a>
   <header class="topbar">
     <div class="topbar-brand">
       <div class="logo" aria-hidden="true">A+</div>
       <div><h1>A+ Studio</h1><p>Produção, revisão e preenchimento</p></div>
     </div>
-    <nav class="app-switcher" aria-label="Áreas da extensão">
-      <button type="button" data-workspace="aplus" class="active">A+ Content</button>
-      <button type="button" data-workspace="listing">Avaliações e anúncio</button>
-    </nav>
+
     <div class="topbar-actions">
-      <div id="jobStatus" class="job-status"><span class="status-indicator" aria-hidden="true"></span>Pronto</div>
-      <button id="apiSettings" class="button-with-icon"><span aria-hidden="true">◆</span> Chaves de API</button>
-      <button id="newProject" class="primary button-with-icon"><span aria-hidden="true">＋</span> Novo projeto</button>
+      <div id="jobStatus" class="job-status" role="status" aria-live="polite"><span class="status-indicator" aria-hidden="true"></span>Pronto</div>
+      <button id="apiSettings" class="button-with-icon"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="4"/><path d="m11 11 9 9m-3-3 3-3m-6 0 3-3"/></svg> Chaves de API</button>
+      <button id="newProject" class="primary button-with-icon"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg> Novo projeto</button>
     </div>
   </header>
 
   <div class="shell">
-    <aside class="sidebar">
+    <aside class="sidebar" aria-label="Navegação e produtos">
+      <div class="nav-eyebrow">ESPAÇO DE TRABALHO</div>
+    <nav class="app-switcher" aria-label="Áreas da extensão">
+      <button type="button" data-workspace="aplus" class="active">A+ Content</button>
+      <button type="button" data-workspace="listing">Avaliações e anúncio</button>
+    </nav>
+      <div class="sidebar-divider"></div>
       <div class="side-head"><strong>Produtos</strong><span id="projectCount">0</span></div>
-      <input id="projectSearch" type="search" placeholder="Buscar ASIN ou produto">
+      <input id="projectSearch" aria-label="Buscar ASIN ou produto" type="search" placeholder="Buscar ASIN ou produto">
       <div class="side-actions">
         <button id="queueSelected">Gerar selecionados</button>
         <button id="queueCancel" hidden>Cancelar fila</button>
@@ -39,14 +45,22 @@
         <textarea id="batchInput" rows="6" placeholder="B0XXXXXXXX; Nome do produto; Informações reais"></textarea>
         <button id="batchAdd">Criar projetos</button>
       </details>
+      <nav class="utility-nav" aria-label="Outras ferramentas">
+        <span class="nav-eyebrow">FERRAMENTAS</span>
+        <details class="popup-guide"><summary>Catálogo e mapeamento</summary><p>Na aba da Amazon, clique no ícone A+ Studio do navegador para acessar:</p><ul><li>Produtos sem A+</li><li>Mapear campos</li><li>Capturar catálogo</li></ul><p>Assim, os comandos usam a página correta.</p></details>
+        <a href="changelog.html" target="_blank" rel="noopener"><span aria-hidden="true">◷</span> Novidades <span aria-hidden="true">↗</span></a>
+      </nav>
+      <div class="sidebar-note">A+ Studio <strong>1.5.15</strong><br>Seu espaço de produção.</div>
     </aside>
 
-    <main class="workspace">
+    <main class="workspace" id="mainContent" tabindex="-1">
+      <div class="workspace-eyebrow">ESTÚDIO DE CONTEÚDO <span>Do produto à Amazon</span></div>
       <section id="emptyState" class="empty-state">
-        <div class="empty-icon">A+</div>
-        <h2>Comece por um produto</h2>
+        <div class="empty-icon" aria-hidden="true">A+</div><span class="welcome-kicker">SEU PRÓXIMO A+ COMEÇA AQUI</span>
+        <h2>Mais clareza. Menos trabalho repetido.</h2>
         <p>Crie um projeto ou adicione ASINs em massa. A geração cria rascunhos; nada é publicado automaticamente.</p>
-        <button id="emptyNew" class="primary">Criar primeiro projeto</button>
+        <button id="emptyNew" class="primary">＋ Criar primeiro projeto</button>
+        <div class="welcome-steps"><div><b>01</b><strong>Informe o produto</strong><p>Reúna os fatos que orientam a criação.</p></div><div><b>02</b><strong>Crie e revise</strong><p>Textos e briefings com o foco que você escolher.</p></div><div><b>03</b><strong>Leve para a Amazon</strong><p>Prepare os módulos e preencha após aprovar.</p></div></div>
       </section>
 
       <section id="editor" hidden>
@@ -64,9 +78,10 @@
         </nav>
 
         <div id="tab-product" class="tab-panel">
+          <div class="page-intro"><div><span class="eyebrow">01 / PRODUTO E ESTRATÉGIA</span><h3>Uma boa criação começa com bons fatos.</h3><p>Confirme o produto e escolha o foco do conteúdo.</p></div><a href="#planningOptions" class="subtle-link">Ir para geração ↓</a></div>
           <div class="grid two">
             <section class="card product-card">
-              <div class="card-title-row"><span class="section-icon" aria-hidden="true">◇</span><div><h3>Informações do produto</h3><p>Dados principais do produto na Amazon.</p></div></div>
+              <div class="card-title-row"><span class="section-icon" aria-hidden="true"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="m12 3 9 5v8l-9 5-9-5V8zM3 8l9 5 9-5M12 13v8M7.5 5.5l9 5"/></svg></span><div><h3>Informações do produto</h3><p>Dados principais do produto na Amazon.</p></div></div>
               <label for="asin">ASIN</label>
               <div class="inline"><input id="asin" maxlength="10" placeholder="B0XXXXXXXX"><button id="importAsin">Carregar produto</button></div>
               <p class="muted">Se a consulta for bloqueada, abra o produto, conclua a verificação da Amazon e volte para capturar a página.</p>
@@ -76,7 +91,7 @@
               <textarea id="description" rows="10" maxlength="18000" placeholder="Cole somente informações confirmadas."></textarea>
             </section>
             <section class="card facts-card">
-              <div class="card-head"><div class="card-title-row"><span class="section-icon neutral" aria-hidden="true">▤</span><div><h3>Ficha factual</h3><p>A IA só pode usar fatos marcados como confirmados.</p></div></div><button id="addFact" class="button-with-icon"><span aria-hidden="true">＋</span> Adicionar fato</button></div>
+              <div class="card-head"><div class="card-title-row"><span class="section-icon neutral" aria-hidden="true"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="4" width="14" height="17" rx="2"/><path d="M9 3h6v4H9zM9 12h6M9 16h6"/></svg></span><div><h3>Ficha factual</h3><p>A IA só pode usar fatos marcados como confirmados.</p></div></div><button id="addFact" class="button-with-icon"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg> Adicionar fato</button></div>
               <div class="facts-table" role="table" aria-label="Ficha factual">
                 <div class="facts-head" role="row"><span>Campo</span><span>Valor confirmado</span><span>Origem</span><span>Status</span><span>Ações</span></div>
                 <div id="facts"></div>
@@ -84,19 +99,32 @@
               <div class="callout"><strong>Origem dos fatos</strong><p>Textos gerados mostram se encontram apoio no título, descrição ou nesta ficha. Inferências ficam sinalizadas para revisão.</p></div>
             </section>
           </div>
-          <section class="card options-card">
-            <h3>Configuração</h3>
+          <section class="card options-card" id="planningOptions">
+            <div class="section-heading"><span class="eyebrow">DIREÇÃO CRIATIVA</span><h3>Como vamos apresentar este produto?</h3><p>O foco escolhido orienta os textos e os briefings de imagem.</p></div>
             <div class="grid three">
-              <label>Modelo<select id="model"><option value="auto/economico">Automático econômico</option><option value="divider-openai" disabled>── OpenAI API oficial ──</option><option value="openai-api/gpt-5.6-luna">GPT-5.6 Luna (econômico e estável)</option><option value="openai-api/gpt-5.6-terra">GPT-5.6 Terra (mais qualidade)</option><option value="openai-api/gpt-5.6-sol">GPT-5.6 Sol (qualidade máxima)</option><option value="divider-kira" disabled>── KiraAI ──</option><option value="kira/qwen3.8-flash">Qwen 3.8 Flash (KiraAI)</option><option value="kira/glm-5.3-free">GLM 5.3 Free (KiraAI)</option><option value="divider-gemini" disabled>── Google Gemini ──</option><option value="gemini/gemini-3.5-flash">Gemini 3.5 Flash</option><option value="gemini/gemini-3.5-flash-lite">Gemini 3.5 Flash-Lite</option><option value="divider-groq" disabled>── Groq ──</option><option value="openai/gpt-oss-20b">GPT-OSS 20B (Groq)</option><option value="openai/gpt-oss-120b">GPT-OSS 120B (Groq)</option><option value="qwen/qwen3.8-27b">Qwen 3.8 27B (Groq)</option><option value="qwen/qwen3.6-27b">Qwen 3.6 27B (Groq)</option><option value="llama-3.1-8b-instant">Llama 3.1 8B Instant (Groq)</option><option value="llama-3.3-70b-versatile">Llama 3.3 70B Versatile (Groq)</option><option value="divider-deepseek" disabled>── DeepSeek ──</option><option value="deepseek/deepseek-flash">DeepSeek Flash (API oficial, paga)</option></select></label>
+              <label>Modelo<select id="model"><option value="auto/economico">Automático — priorizar qualidade</option><option value="divider-openai" disabled>── OpenAI API oficial ──</option><option value="openai-api/gpt-5.6-luna">GPT-5.6 Luna (econômico e estável)</option><option value="openai-api/gpt-5.6-terra">GPT-5.6 Terra (mais qualidade)</option><option value="openai-api/gpt-5.6-sol">GPT-5.6 Sol (qualidade máxima)</option><option value="divider-kira" disabled>── KiraAI ──</option><option value="kira/qwen3.8-flash">Qwen 3.8 Flash (KiraAI)</option><option value="kira/glm-5.3-free">GLM 5.3 Free (KiraAI)</option><option value="divider-xkiro" disabled>── xKiro ──</option><option value="xkiro/auto-quality">Melhor modelo gratuito disponível (xKiro)</option><option value="divider-gemini" disabled>── Google Gemini ──</option><option value="gemini/gemini-3.5-flash">Gemini 3.5 Flash</option><option value="gemini/gemini-3.5-flash-lite">Gemini 3.5 Flash-Lite</option><option value="divider-groq" disabled>── Groq ──</option><option value="openai/gpt-oss-20b">GPT-OSS 20B (Groq)</option><option value="openai/gpt-oss-120b">GPT-OSS 120B (Groq)</option><option value="qwen/qwen3.8-27b">Qwen 3.8 27B (Groq)</option><option value="qwen/qwen3.6-27b">Qwen 3.6 27B (Groq)</option><option value="llama-3.1-8b-instant">Llama 3.1 8B Instant (Groq)</option><option value="llama-3.3-70b-versatile">Llama 3.3 70B Versatile (Groq)</option></select></label>
               <label>FAQ<input id="faqCount" type="number" min="1" max="6" value="5"></label>
               <label>Especificações<input id="specCount" type="number" min="1" max="15" value="6"></label>
+            </div>
+            <fieldset class="planning-focus" aria-describedby="planningFocusHelp">
+              <legend>Foco do planejamento</legend>
+              <div class="planning-focus-options">
+                <label class="planning-focus-option"><input type="radio" name="planningFocus" value="commercial" checked><span><strong>Comercial persuasivo · padrão</strong><small>Benefícios, desejo, ocasião de uso e apresentação comercial com fidelidade aos fatos.</small></span></label>
+                <label class="planning-focus-option return-focus"><input type="radio" name="planningFocus" value="returns"><span><strong>Clareza anti-devolução</strong><small>Textos e imagens voltados a compra correta, expectativa real, uso, tamanho, compatibilidade e limitações.</small></span></label>
+              </div>
+              <p id="planningFocusHelp" class="muted">A escolha fica salva somente neste produto.</p>
+            </fieldset>
+            <div id="returnFocusPanel" class="return-focus-panel" hidden>
+              <div class="card-head"><div><strong>Problemas que precisam ficar evidentes</strong><p>Informe reclamações, motivos de devolução e expectativas incorretas. A IA continuará limitada aos fatos confirmados.</p></div><button id="importReviewRisks" type="button">Usar análise de avaliações</button></div>
+              <textarea id="returnRiskNotes" rows="6" maxlength="6000" placeholder="Ex.: clientes esperam uma estrutura rígida, mas o produto é uma almofada macia e maleável destinada ao conforto."></textarea>
+              <p id="returnRiskSource" class="field-meta"></p>
             </div>
             <div class="grid strategy-controls">
               <label>Estratégia de venda<select id="strategyMode"><option value="auto">Automática recomendada</option><option value="emotional">Mais emocional</option><option value="practical">Mais prática</option><option value="technical">Mais técnica</option><option value="premium">Mais premium</option><option value="conservative">Mais segura e conservadora</option><option value="custom">Personalizada</option></select></label>
               <label>Modelo de produto<select id="templateMode"><option value="auto">Detectar automaticamente</option><option value="infantil">Infantil e bebê</option><option value="pet">Pet</option><option value="eletronico">Eletrônicos e informática</option><option value="moda">Moda e acessórios</option><option value="saude">Saúde e suplementos</option><option value="ferramenta">Ferramentas e uso profissional</option><option value="esporte">Esporte e fitness</option><option value="automotivo">Automotivo</option><option value="viagem">Viagem e portáteis</option><option value="beleza">Beleza e cuidados pessoais</option><option value="casa">Casa, organização e decoração</option><option value="generic">Produto geral</option></select></label>
               <label id="customStrategyWrap" hidden>Direção personalizada<input id="customStrategy" maxlength="800" placeholder="Ex.: enfatizar presente, acabamento e ocasião de uso"></label>
             </div>
-            <div class="action-row"><button id="createPlan">Criar planejamento + textos A+</button><button id="generateDraft" class="primary">Gerar somente textos A+</button></div>
+            <div class="action-row"><button id="createPlan" class="primary">Criar planejamento + textos A+</button><button id="generateDraft">Gerar somente textos A+</button></div>
           </section>
           <section class="card strategy-card">
             <div class="card-head"><div><h3>Estratégia automática de venda</h3><p>A extensão transforma os dados do produto em ângulos diferentes para cada módulo.</p></div><button id="addMissingFacts" type="button">Adicionar campos ausentes</button></div>
@@ -110,6 +138,7 @@
         </div>
 
         <div id="tab-texts" class="tab-panel" hidden>
+          <div class="page-intro"><div><span class="eyebrow">02 / A+ CONTENT</span><h3>Textos com intenção. Revisão no seu ritmo.</h3><p>Edite cada módulo e copie ou regenere somente o que precisar.</p></div></div>
           <section class="card">
             <div class="card-head"><div><h3>Editor dos textos</h3><p>Edite, copie ou regenere apenas o campo necessário. Alterações removem a aprovação.</p></div><button id="exportTexts">Baixar textos</button></div>
             <div id="textEditor" class="text-editor"></div>
@@ -117,6 +146,7 @@
         </div>
 
         <div id="tab-images" class="tab-panel" hidden>
+          <div class="page-intro"><div><span class="eyebrow">03 / A+ CONTENT</span><h3>Cada imagem responde a uma dúvida.</h3><p>Briefings para produzir as oito imagens do seu A+.</p></div></div>
           <section class="card">
             <div class="card-head"><div><h3>Briefings de imagens</h3><p>Oito imagens separadas, nos tamanhos do A+ Premium.</p></div><button id="copyAllPrompts">Copiar prompt completo</button></div>
             <div id="imageBriefs"></div>
@@ -124,6 +154,7 @@
         </div>
 
         <div id="tab-validation" class="tab-panel" hidden>
+          <div class="page-intro"><div><span class="eyebrow">04 / A+ CONTENT</span><h3>Revise com contexto antes de aprovar.</h3><p>Confira a cobertura dos módulos e os pontos que merecem atenção.</p></div></div>
           <div class="grid two">
             <section class="card score-card"><div id="score" class="score">—</div><div><h3>Qualidade do A+</h3><p id="scoreSummary">Valide o projeto para calcular a nota.</p></div></section>
             <section class="card"><h3>Estado do projeto</h3><div id="validationSummary"></div></section>
@@ -137,8 +168,10 @@
         </div>
 
         <div id="tab-publish" class="tab-panel" hidden>
+          <div class="page-intro"><div><span class="eyebrow">05 / A+ CONTENT</span><h3>Seu conteúdo pronto para a próxima etapa.</h3><p>Aprove, confira a conexão e prepare o editor da Amazon.</p></div></div>
           <section class="card publish-card">
             <h3>Revisar, aprovar e preencher</h3>
+            <div class="amazon-sequence" aria-label="Sequência dos seis módulos"><span><b>01</b> Imagem completa</span><span><b>02</b> Quatro imagens</span><span><b>03</b> Duas imagens</span><span><b>04</b> FAQ</span><span><b>05</b> Imagem completa</span><span><b>06</b> Especificações</span></div>
             <ol><li>Revise todos os textos e informações sinalizadas.</li><li>Valide limites, fatos e especificações.</li><li>Aprove este produto individualmente.</li><li>Abra a edição A+ no Seller Central em outra aba da mesma janela e espere terminar de carregar. Depois volte ao Studio e clique no botão abaixo.</li></ol>
             <div id="approvalState" class="callout"></div>
             <div class="action-row"><button id="approveProject">Aprovar conteúdo</button><button id="diagnoseAmazon">Diagnosticar conexão</button><button id="recordModules">Registrar montagem (suporte)</button><button id="fillAmazon" class="primary">Preparar módulos / preencher textos</button></div>
@@ -178,7 +211,7 @@
         <div id="intel-reviews" class="intelligence-panel">
           <div class="grid intelligence-input-grid">
             <section class="card">
-              <div class="card-title-row"><span class="section-icon" aria-hidden="true">◎</span><div><h3>Amazon Review Analyzer</h3><p>Encontra reclamações recorrentes, expectativa incorreta, problemas de tamanho e possíveis gatilhos de devolução.</p></div></div>
+              <div class="card-title-row"><span class="section-icon" aria-hidden="true"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11a8 8 0 0 1-8 8H5l-3 3V11a9 9 0 0 1 19 0Z"/><path d="M7 9h9M7 13h6"/></svg></span><div><h3>Amazon Review Analyzer</h3><p>Encontra reclamações recorrentes, expectativa incorreta, problemas de tamanho e possíveis gatilhos de devolução.</p></div></div>
               <label for="reviewInput">Avaliações dos clientes</label>
               <textarea id="reviewInput" rows="16" maxlength="60000" placeholder="Cole as avaliações. De preferência, separe cada comentário por uma linha em branco."></textarea>
               <div class="field-meta"><span id="reviewSampleCount">Nenhuma avaliação identificada</span><span>Até 60.000 caracteres</span></div>
@@ -199,7 +232,7 @@
         <div id="intel-optimizer" class="intelligence-panel" hidden>
           <div class="grid intelligence-input-grid">
             <section class="card">
-              <div class="card-title-row"><span class="section-icon" aria-hidden="true">✦</span><div><h3>Amazon Listing Optimization</h3><p>Reescreve título, bullets e descrição sem inventar características nem esconder limitações.</p></div></div>
+              <div class="card-title-row"><span class="section-icon" aria-hidden="true"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="m14 5 5 5M4 20l5-1L21 7l-5-5L4 14z"/></svg></span><div><h3>Amazon Listing Optimization</h3><p>Reescreve título, bullets e descrição sem inventar características nem esconder limitações.</p></div></div>
               <label for="listingGoal">Prioridade da otimização</label>
               <select id="listingGoal"><option value="returns">Reduzir devoluções e compra errada</option><option value="balanced">Equilibrar clareza, conversão e SEO</option><option value="seo">SEO e conversão com linguagem conservadora</option></select>
               <label for="listingTitle">Título atual</label><input id="listingTitle" maxlength="1000" placeholder="Título publicado ou planejado">
@@ -222,11 +255,11 @@
     </main>
   </div>
 
-  <div id="toast" class="toast" hidden></div>
-  <dialog id="apiDialog">
+  <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+  <dialog id="apiDialog" aria-labelledby="apiDialogTitle">
     <form method="dialog" class="dialog-card">
-      <div class="card-head"><div><h3>API Key do modelo selecionado</h3><p id="apiState">Verificando configuração…</p></div><button value="cancel" aria-label="Fechar">×</button></div>
-      <label for="keyProvider">Provedor</label><select id="keyProvider"><option value="openai">OpenAI API oficial</option><option value="gemini">Google Gemini</option><option value="kira">KiraAI.vn</option><option value="groq">Groq</option><option value="deepseek">DeepSeek</option></select>
+      <div class="card-head"><div><h3 id="apiDialogTitle">Conexões de inteligência artificial</h3><p id="apiState">Verificando configuração…</p></div><button value="cancel" aria-label="Fechar">×</button></div>
+      <label for="keyProvider">Provedor</label><select id="keyProvider"><option value="openai">OpenAI API oficial</option><option value="gemini">Google Gemini</option><option value="kira">KiraAI.vn</option><option value="groq">Groq</option><option value="xkiro">xKiro</option></select>
       <div id="savedKeyBox" hidden><label for="savedKeyMask">Chave salva</label><input id="savedKeyMask" readonly aria-label="Chave salva mascarada"><button id="replaceSavedKey" type="button">Substituir chave</button></div>
       <div id="newKeyBox"><label for="apiKey">Nova chave</label><input id="apiKey" type="password" autocomplete="off" placeholder="Cole sua API Key"></div>
       <p class="muted">A chave fica salva somente neste navegador e não é enviada aos produtos ou à página da Amazon.</p>

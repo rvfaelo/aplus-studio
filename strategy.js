@@ -1,3 +1,5 @@
+import {reviewRiskContext} from "./listing-intelligence.js";
+
 const clean = (value, max = 18000) => String(value ?? "").normalize("NFC")
   .replace(/[\u0000-\u001f\u007f\u200b-\u200f\u202a-\u202e\u2066-\u2069]/g, " ")
   .replace(/\s+/g, " ").trim().slice(0, max);
@@ -26,6 +28,19 @@ const sharedAngles = Object.freeze([
   {module: "Banner final", angle: "Recompensa emocional", objective: "Fechar com o sentimento ou resultado cotidiano desejado, sem pedir a compra."},
   {module: "FAQ", angle: "Segurança da decisão", objective: "Responder dúvidas específicas sobre uso, compatibilidade, cuidados e o que está incluído."},
   {module: "Especificações", angle: "Compra correta", objective: "Organizar fatos técnicos e medidas para evitar expectativa errada e devolução."}
+]);
+
+const antiReturnAngles = Object.freeze([
+  {module: "Banner principal", angle: "Identificação exata", objective: "Mostrar claramente o produto, seu formato, a quantidade e as variações confirmadas, sem sugerir itens que não acompanham a compra."},
+  {module: "Quatro imagens · Imagem 1", angle: "Conteúdo da compra", objective: "Mostrar exatamente o produto, as peças e os acessórios realmente incluídos."},
+  {module: "Quatro imagens · Imagem 2", angle: "Tamanho e escala", objective: "Demonstrar escala real e proporções sem aumentar visualmente o produto."},
+  {module: "Quatro imagens · Imagem 3", angle: "Material e comportamento", objective: "Evidenciar textura, espessura, firmeza, flexibilidade ou estrutura somente quando confirmadas."},
+  {module: "Quatro imagens · Imagem 4", angle: "Uso correto", objective: "Demonstrar a maneira adequada de usar o produto, com pessoa apenas quando ela realmente explicar o uso."},
+  {module: "Duas imagens · Imagem 1", angle: "Escolha correta", objective: "Explicar medição, compatibilidade, instalação ou montagem que possa causar compra errada."},
+  {module: "Duas imagens · Imagem 2", angle: "Limite e expectativa real", objective: "Corrigir a principal expectativa equivocada sem depreciar o produto e sem inventar limitações."},
+  {module: "Banner final", angle: "Resumo da decisão", objective: "Confirmar visualmente aparência, variações, contexto adequado e característica decisiva para a compra correta."},
+  {module: "FAQ", angle: "Dúvidas que geram devolução", objective: "Responder diretamente às reclamações, incompatibilidades, limites, cuidados e itens inclusos sustentados pelos dados."},
+  {module: "Especificações", angle: "Conferência antes da compra", objective: "Organizar medidas, material, quantidade, modelo, compatibilidade e indicação de uso confirmados."}
 ]);
 
 const templates = {
@@ -273,12 +288,19 @@ export function buildSalesStrategy(input = {}) {
   const mode = STRATEGY_MODES[requestedMode] ? requestedMode : "auto";
   const customDirection = mode === "custom" ? clean(input.config?.customStrategy || input.customStrategy, 800) : "";
   const focus = template.angles;
-  const angles = sharedAngles.map((item, index) => ({...item,
+  const planningFocus = input.config?.planningFocus === "returns" ? "returns" : "commercial";
+  const reviewContext = reviewRiskContext(input.listing?.reviewAnalysis);
+  const manualRiskContext = clean(input.config?.returnRiskNotes, 6000);
+  const riskContext = [...new Set([manualRiskContext, reviewContext].filter(Boolean))].join("\n").slice(0, 9000);
+  const angleSource = planningFocus === "returns" ? antiReturnAngles : sharedAngles;
+  const angles = angleSource.map((item, index) => ({...item,
     categoryFocus: focus[index % focus.length]
   }));
   const checklist = checklistFor(template, sourceText(input));
   return {
     category, categoryLabel: template.label, detectedAutomatically: clean(input.config?.templateMode || "auto") === "auto",
+    planningFocus, focusLabel: planningFocus === "returns" ? "Clareza anti-devolução" : "Comercial persuasivo",
+    riskContext,
     mode, modeLabel: STRATEGY_MODES[mode].label,
     direction: customDirection || STRATEGY_MODES[mode].direction,
     buyer: template.buyer, pain: template.pain, desire: template.desire, objections: template.objections,
@@ -291,14 +313,31 @@ export function strategyPrompt(strategy) {
   const angleLines = (strategy.angles || []).map(item =>
     `- ${item.module}: ${item.angle}; foco da categoria: ${item.categoryFocus}; objetivo: ${item.objective}`).join("\n");
   const missing = (strategy.missingFields || []).join(", ") || "nenhuma lacuna detectada";
+  const antiReturn = strategy.planningFocus === "returns" ? `
+FOCO CENTRAL: CLAREZA ANTI-DEVOLUÇÃO
+O objetivo não é maximizar a persuasão indiscriminadamente. O objetivo é converter o comprador adequado com a expectativa correta.
+- Trate os relatos abaixo como sinais do que precisa ser esclarecido. Eles não autorizam inventar características técnicas.
+- Uma realidade descrita por avaliações pode orientar linguagem cautelosa quando for recorrente, mas nunca transforme uma opinião isolada em fato universal.
+- Priorize o que é, o que acompanha, tamanho, escala, material, comportamento físico, uso correto, medição, compatibilidade e limitações comprovadas.
+- Não esconda uma limitação para deixar o produto mais atraente e não use linguagem que sugira desempenho, firmeza, resistência, segurança ou compatibilidade não confirmados.
+- FAQ deve atacar as dúvidas que causam compra errada. Especificações devem permitir conferência objetiva antes da compra.
+
+RISCOS E DIVERGÊNCIAS A ESCLARECER
+${strategy.riskContext || "Nenhum relato foi importado. Identifique apenas riscos sustentados pelo título, descrição e ficha factual."}
+` : `
+FOCO CENTRAL: COMERCIAL PERSUASIVO
+Priorize benefício, desejo, contexto de uso e apresentação comercial, mantendo clareza factual e prevenção normal de compra errada.
+`;
   return `ESTRATÉGIA DE VENDA DEFINIDA AUTOMATICAMENTE
 Categoria/modelo de produto: ${strategy.categoryLabel}
+Modo do planejamento: ${strategy.focusLabel || "Comercial persuasivo"}
 Estilo: ${strategy.modeLabel}. ${strategy.direction}
 Comprador provável: ${strategy.buyer}
 Dor provável a reconhecer com cautela: ${strategy.pain}
 Desejo emocional: ${strategy.desire}
 Objeções a tratar quando houver fatos: ${strategy.objections}
 Informações ainda não detectadas: ${missing}
+${antiReturn}
 
 FUNÇÃO DE CADA MÓDULO
 ${angleLines}
@@ -310,8 +349,29 @@ export function compactSalesStrategy(strategy) {
   if (!strategy) return null;
   return {
     category: strategy.category, categoryLabel: strategy.categoryLabel, detectedAutomatically: strategy.detectedAutomatically,
+    planningFocus: strategy.planningFocus, focusLabel: strategy.focusLabel, riskContext: strategy.riskContext,
     mode: strategy.mode, modeLabel: strategy.modeLabel, direction: strategy.direction,
     buyer: strategy.buyer, pain: strategy.pain, desire: strategy.desire, objections: strategy.objections,
     angles: (strategy.angles || []).map(({module, angle, categoryFocus, objective}) => ({module, angle, categoryFocus, objective}))
   };
+}
+
+export function antiReturnQualityIssues(project = {}) {
+  if (project.config?.planningFocus !== "returns") return [];
+  const issues = [], strategy = buildSalesStrategy(project), briefs = project.plan?.imageBriefs || [];
+  if (!strategy.riskContext) issues.push("Modo anti-devolução: informe o problema de expectativa ou importe uma análise de avaliações.");
+  if (briefs.length !== 8) issues.push("Modo anti-devolução: o planejamento precisa conter exatamente 8 briefings de imagem.");
+  else {
+    const required = ["question_answered", "return_risk_reduced", "must_show", "must_not_suggest"];
+    const incomplete = briefs.filter(brief => required.some(key => !clean(brief?.[key], 900))).length;
+    if (incomplete) issues.push(`Modo anti-devolução: ${incomplete} briefing(s) ainda não explicam dúvida, risco, o que mostrar e o que não sugerir.`);
+  }
+  const texts = Object.values(project.texts || {}).join(" ");
+  const ignored = new Set(["produto", "cliente", "compra", "avaliacao", "devolucao", "imagem", "amazon", "muito", "para", "como", "mais", "deve", "pode"]);
+  const riskWords = [...new Set(fold(strategy.riskContext).split(" ").filter(word => word.length >= 5 && !ignored.has(word)))];
+  const content = new Set(fold(texts).split(" "));
+  const overlap = riskWords.filter(word => content.has(word));
+  if (riskWords.length >= 4 && overlap.length < 2)
+    issues.push("Modo anti-devolução: os textos ainda não parecem abordar o principal problema de expectativa informado.");
+  return issues;
 }

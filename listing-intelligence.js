@@ -232,6 +232,20 @@ export function reviewAnalysisText(result) {
   return lines.join("\n").trim();
 }
 
+export function reviewRiskContext(result) {
+  if (!result) return "";
+  const lines = [];
+  const push = value => { const text = oneLine(value, 700); if (text) lines.push(text); };
+  push(result.summary?.diagnosis);
+  for (const item of (result.return_triggers || []).slice(0, 8))
+    push(`Risco ${item.priority || ""}: ${item.trigger}. Motivo: ${item.why}. Correção: ${item.action}.`);
+  for (const item of (result.expectation_gaps || []).slice(0, 8))
+    push(`Expectativa: ${item.customer_expects}. Realidade observada: ${item.product_reality}. Ajuste: ${item.listing_correction}.`);
+  for (const value of (result.actions?.images_video || []).slice(0, 8)) push(`Imagem: ${value}`);
+  for (const value of (result.actions?.aplus || []).slice(0, 8)) push(`A+: ${value}`);
+  return [...new Set(lines)].join("\n").slice(0, 6000);
+}
+
 export function listingOptimizationText(result) {
   if (!result) return "";
   const output = result.optimized || {};

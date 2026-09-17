@@ -1,12 +1,12 @@
 import {buildSchema, generationInstructions, normalizeAndValidate} from "./shared.js";
 import {errorDiagnostic} from "./diagnostics.js";
-import {providerForModel, modelForRequest} from "./providers.js";
+import {providerForModel, modelForRequest, chooseXkiroQualityModel, XKIRO_AUTO_QUALITY_MODEL} from "./providers.js";
 
 const OPENAI_ENDPOINTS = Object.freeze({
   openai: "https://api.openai.com/v1/chat/completions",
   groq: "https://api.groq.com/openai/v1/chat/completions",
   kira: "https://kiraai.vn/api/v1/chat/completions",
-  deepseek: "https://api.deepseek.com/chat/completions"
+  xkiro: "https://api.xkiro.com/v1/chat/completions"
 });
 const INITIAL_OUTPUT_TOKENS = 2600;
 const RECOVERY_OUTPUT_TOKENS = 6000;
@@ -67,9 +67,34 @@ const MODEL_LIST_ENDPOINTS = Object.freeze({
   openai: "https://api.openai.com/v1/models",
   groq: "https://api.groq.com/openai/v1/models",
   kira: "https://kiraai.vn/api/v1/models",
-  deepseek: "https://api.deepseek.com/models",
+  xkiro: "https://api.xkiro.com/v1/models",
   gemini: "https://generativelanguage.googleapis.com/v1beta/models"
 });
+
+const XKIRO_USAGE_ENDPOINT = "https://api.xkiro.com/v1/usage";
+let xkiroCatalogCache = null;
+
+function xkiroAuto(model) { return String(model) === XKIRO_AUTO_QUALITY_MODEL; }
+
+async function fetchXkiroCatalog({apiKey, fetcher = fetch, force = false} = {}) {
+  if (!force && xkiroCatalogCache && Date.now() - xkiroCatalogCache.at < 5 * 60 * 1000) return xkiroCatalogCache.models;
+  const response = await fetcher(MODEL_LIST_ENDPOINTS.xkiro, {method: "GET", credentials: "omit", redirect: "error",
+    headers: apiKey ? {Authorization: `Bearer ${apiKey}`} : {}});
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) throw apiFailure(response.status, payload, {model: XKIRO_AUTO_QUALITY_MODEL, event: "xkiro_models"});
+  const models = Array.isArray(payload.data) ? payload.data : [];
+  xkiroCatalogCache = {at: Date.now(), models};
+  return models;
+}
+
+async function resolveXkiroModel(model, apiKey, fetcher = fetch) {
+  if (!xkiroAuto(model)) return {id: modelForRequest(model), metadata: null};
+  const models = await fetchXkiroCatalog({apiKey, fetcher});
+  const selected = chooseXkiroQualityModel(models);
+  if (!selected) throw new GenerationError("Nenhum modelo gratuito de chat foi encontrado no catálogo atual do xKiro.", "xkiro_no_free_model", false,
+    {model, event: "xkiro_model_select"});
+  return {id: String(selected.id), metadata: selected};
+}
 
 // Valida autenticação sem gerar conteúdo nem consumir tokens. A listagem também
 // permite avisar quando o modelo padrão do provedor não está liberado na conta.
@@ -81,6 +106,19 @@ export async function testApiKey({apiKey, model, fetcher = fetch}) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 20000);
   try {
+    if (provider === "xkiro") {
+      // /v1/models é público no xKiro; /v1/usage exige autenticação e é gratuito,
+      // por isso ele é usado para validar de verdade a chave sem gastar tokens.
+      const usageResponse = await fetcher(XKIRO_USAGE_ENDPOINT, {method: "GET", credentials: "omit", redirect: "error",
+        headers: {Authorization: `Bearer ${key}`}, signal: controller.signal});
+      const usage = await usageResponse.json().catch(() => ({}));
+      if (!usageResponse.ok) throw apiFailure(usageResponse.status, usage, {model, secrets: [key], event: "key_test"});
+      const models = await fetchXkiroCatalog({apiKey: key, fetcher, force: true});
+      const selected = xkiroAuto(model) ? chooseXkiroQualityModel(models) : models.find(item => String(item?.id||"") === modelForRequest(model));
+      if (xkiroAuto(model) && !selected) throw new Error("A chave é válida, mas o xKiro não publicou nenhum modelo gratuito de chat neste momento.");
+      return {valid: true, provider, model: selected?.id || modelForRequest(model), modelAvailable: !!selected, modelCount: models.length,
+        selectedAutomatically: xkiroAuto(model), freeTokens: usage?.free_tokens || null, plan: usage?.plan ?? null};
+    }
     const headers = provider === "gemini" ? {"x-goog-api-key": key} : {Authorization: `Bearer ${key}`};
     const response = await fetcher(MODEL_LIST_ENDPOINTS[provider], {method: "GET", credentials: "omit", redirect: "error", headers, signal: controller.signal});
     const payload = await response.json().catch(() => ({}));
@@ -257,14 +295,14 @@ async function request({apiKey, model, input, instructions, signal, onProgress, 
     ];
 
     const provider=providerForModel(model);
-    const requestModel=modelForRequest(model);
+    const xkiroResolved = provider === "xkiro" ? await resolveXkiroModel(model, apiKey, fetcher) : null;
+    const requestModel=xkiroResolved?.id || modelForRequest(model);
     const body = provider === "openai"
       ? {model:requestModel, messages, stream: true, max_completion_tokens: maxOutputTokens}
       : {model:requestModel, messages, stream: true, temperature: 0.4, max_tokens: maxOutputTokens};
-    // KiraAI é compatível com o formato OpenAI, mas alguns modelos gratuitos
-    // não anunciam suporte a response_format. O prompt ainda exige JSON e a
-    // resposta é validada localmente antes de preencher qualquer campo.
-    if (strictJson && provider!=="kira") body.response_format = {type: "json_object"};
+    // KiraAI e o catálogo gratuito do xKiro misturam modelos com suporte desigual
+    // a response_format. O prompt ainda exige JSON e a resposta é validada localmente.
+    if (strictJson && provider!=="kira" && provider!=="xkiro") body.response_format = {type: "json_object"};
     const effort = reasoningEffortFor(model);
     if (effort) body.reasoning_effort = effort;
 
@@ -292,7 +330,7 @@ async function request({apiKey, model, input, instructions, signal, onProgress, 
     } catch { /* headers são opcionais */ }
 
     const diagnosticContext = {
-      model, maxOutputTokens, attempt,
+      model: provider === "xkiro" ? `${model} -> ${requestModel}` : model, maxOutputTokens, attempt,
       secrets: [apiKey, ...(secrets || [])],
       httpStatus: response.status,
       requestId: response.headers.get("x-request-id")

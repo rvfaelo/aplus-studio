@@ -2,7 +2,7 @@ import {strategyPrompt} from "./strategy.js";
 
 // Regras compartilhadas pelo popup, pelo worker e pelos testes. Sem dependências externas.
 export const DEFAULTS = Object.freeze({model: "auto/economico", faqCount: 5, specCount: 6,
-  strategyMode: "auto", templateMode: "auto", customStrategy: ""});
+  strategyMode: "auto", templateMode: "auto", customStrategy: "", planningFocus: "commercial", returnRiskNotes: ""});
 
 export const SELLER_HOSTS = Object.freeze([
   "sellercentral.amazon.com.br", "sellercentral.amazon.com", "sellercentral.amazon.ca",
@@ -26,8 +26,10 @@ export function settings(input = {}) {
   const allowedTemplates = new Set(["auto", "infantil", "pet", "eletronico", "moda", "saude", "ferramenta", "esporte", "automotivo", "viagem", "beleza", "casa", "generic"]);
   const strategyMode = allowedStrategies.has(String(input.strategyMode || "")) ? String(input.strategyMode) : DEFAULTS.strategyMode;
   const templateMode = allowedTemplates.has(String(input.templateMode || "")) ? String(input.templateMode) : DEFAULTS.templateMode;
+  const planningFocus = input.planningFocus === "returns" ? "returns" : DEFAULTS.planningFocus;
   return {model, faqCount: integer(input.faqCount, 5, 6), specCount: integer(input.specCount, 6, 15),
-    strategyMode, templateMode, customStrategy: String(input.customStrategy || "").trim().slice(0, 800)};
+    strategyMode, templateMode, customStrategy: String(input.customStrategy || "").trim().slice(0, 800), planningFocus,
+    returnRiskNotes: String(input.returnRiskNotes || "").normalize("NFC").replace(/[\u0000-\u001f\u007f]/g, " ").replace(/\s+/g, " ").trim().slice(0, 6000)};
 }
 
 export function isSellerURL(value) {
@@ -244,10 +246,36 @@ export function normalizeAndValidate(raw, slots, source = {title: "", descriptio
 }
 
 export function generationInstructions(slots, strategy = null) {
+  const antiReturn = strategy?.planningFocus === "returns";
+  const focusRules = antiReturn ? `
+MODO ATIVO: CLAREZA ANTI-DEVOLUÇÃO
+- O texto deve converter somente o comprador compatível, com expectativa correta.
+- Diga claramente o que o produto é, para que serve e, quando sustentado pelos dados ou por relatos recorrentes importados, qual expectativa precisa ser corrigida.
+- Priorize quantidade, itens inclusos, tamanho, material, comportamento físico, uso correto, medição, compatibilidade, instalação, cuidados e limitações comprovadas.
+- Não use uma promessa ampla quando uma formulação precisa evitar compra errada.
+- Não fale mal do produto. Reposicione a característica real para o uso adequado.
+- Reclamações e devoluções orientam as dúvidas a responder; não autorizam inventar especificações.
+- FAQ deve atacar as perguntas ligadas às reclamações. O banner final confirma para quem e para qual uso o produto é adequado, sem call-to-action.
+` : `
+MODO ATIVO: COMERCIAL PERSUASIVO
+- Destaque benefícios reais, desejo, ocasião de uso e apresentação comercial sem perder clareza factual.
+`;
+  const moduleStructure = antiReturn ? `
+- Banner inicial (hero): identifique claramente o produto, sua função real e o principal critério de compra correta.
+- Quatro blocos: organize o que acompanha, tamanho/escala, material/comportamento e uso correto, adaptando apenas quando faltarem fatos.
+- Dois blocos maiores: explique medição/compatibilidade/instalação e corrija a principal expectativa equivocada comprovada.
+- Banner final: confirme o uso adequado e o valor real do produto, sem pedir a compra.
+` : `
+- Banner inicial (hero): apresente o produto e o principal benefício de forma impactante.
+- Quatro blocos: mostre 4 benefícios ou usos distintos e concretos.
+- Dois blocos maiores: explique uso prático e praticidade no dia a dia.
+- Banner final: feche com um benefício complementar ou reforço de valor (sem call-to-action de compra).
+`;
   return `Você escreve conteúdo Amazon A+ Premium em português do Brasil.
 Responda APENAS com um objeto JSON válido no formato { "texts": { ... }, "notes": [ ... ] }.
 
 ${strategyPrompt(strategy)}
+${focusRules}
 
 ORDEM OBRIGATÓRIA DE PRIORIDADE:
 1. Fidelidade aos dados fornecidos.
@@ -308,10 +336,7 @@ PROIBIDO:
 - Pedir compra ou avaliação no último banner.
 
 ESTRUTURA DOS MÓDULOS:
-- Banner inicial (hero): apresente o produto e o principal benefício de forma impactante.
-- Quatro blocos: mostre 4 benefícios ou usos distintos e concretos.
-- Dois blocos maiores: explique uso prático e praticidade no dia a dia.
-- Banner final: feche com um benefício complementar ou reforço de valor (sem call-to-action de compra).
+${moduleStructure}
 
 FAQ (cada linha vale muito):
 - Antes de criar a FAQ, identifique o produto exato, sua função e seu contexto de uso a partir do título e da descrição.

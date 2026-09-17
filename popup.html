@@ -12,8 +12,10 @@
     .secondary:hover { background:#e8f4c8; }
   </style>
   <script type="module" src="popup.js"></script>
+  <link rel="stylesheet" href="studio-ui.css">
+  <script defer src="studio-ui.js"></script>
 </head>
-<body>
+<body class="studio-popup">
   <header>
     <span class="brand">A+</span>
     <div>
@@ -23,8 +25,9 @@
     <span class="language">PT-BR</span>
   </header>
   <main>
+    <nav class="quick-nav" aria-label="Ferramentas rápidas"><a href="#form">Gerar</a><a href="#planningSection">Planejar</a><a href="#auditSection">Catálogo</a><a href="#keySettings">APIs</a></nav>
     <p class="intro">Abra a edição do A+ com os seis módulos adicionados e expandidos. Depois, informe o produto.</p>
-    <button id="openDashboard" class="primary dashboard-button" type="button">Abrir painel A+ Studio 1.5</button>
+    <button id="openDashboard" class="primary dashboard-button" type="button">Abrir espaço de trabalho A+ Studio</button>
     <form id="form">
       <label for="title">Título do produto</label>
       <input id="title" name="title" type="text" maxlength="1000" required disabled placeholder="Ex.: Organizador de maquiagem em acrílico">
@@ -35,7 +38,7 @@
 
       <label for="model">Modelo de IA</label>
       <select id="model" disabled>
-        <option value="auto/economico">Automático econômico (recomendado)</option>
+        <option value="auto/economico">Automático — priorizar qualidade (recomendado)</option>
         <option value="divider-openai" disabled>── OpenAI API oficial ──</option>
         <option value="openai-api/gpt-5.6-luna">GPT-5.6 Luna (econômico e estável)</option>
         <option value="openai-api/gpt-5.6-terra">GPT-5.6 Terra (mais qualidade)</option>
@@ -43,6 +46,8 @@
         <option value="divider-kira" disabled>── KiraAI ──</option>
         <option value="kira/qwen3.8-flash">Qwen 3.8 Flash (KiraAI)</option>
         <option value="kira/glm-5.3-free">GLM 5.3 Free (KiraAI)</option>
+        <option value="divider-xkiro" disabled>── xKiro ──</option>
+        <option value="xkiro/auto-quality">Melhor modelo gratuito disponível (qualidade)</option>
         <option value="divider-gemini" disabled>── Google Gemini ──</option>
         <option value="gemini/gemini-3.5-flash">Gemini 3.5 Flash (recomendado)</option>
         <option value="gemini/gemini-3.5-flash-lite">Gemini 3.5 Flash-Lite (mais econômico)</option>
@@ -53,8 +58,6 @@
         <option value="qwen/qwen3.6-27b">Qwen 3.6 27B</option>
         <option value="llama-3.1-8b-instant">Llama 3.1 8B Instant</option>
         <option value="llama-3.3-70b-versatile">Llama 3.3 70B Versatile</option>
-        <option value="divider-deepseek" disabled>── DeepSeek ──</option>
-        <option value="deepseek/deepseek-flash">DeepSeek Flash (API oficial, paga)</option>
         <option value="custom">Outro modelo</option>
       </select>
       <input id="customModel" type="text" maxlength="100" aria-label="Nome do modelo" placeholder="Digite o nome exato do modelo" hidden disabled>
@@ -88,7 +91,7 @@
         </summary>
         <div class="key-body">
           <label for="keyProvider">Chave que deseja configurar</label>
-          <select id="keyProvider"><option value="openai">OpenAI API oficial</option><option value="gemini">Google Gemini</option><option value="kira">KiraAI.vn</option><option value="groq">Groq</option><option value="deepseek">DeepSeek</option></select>
+          <select id="keyProvider"><option value="openai">OpenAI API oficial</option><option value="gemini">Google Gemini</option><option value="kira">KiraAI.vn</option><option value="groq">Groq</option><option value="xkiro">xKiro</option></select>
           <p class="hint" id="keyHint" aria-live="polite">Para Gemini, use a chave gratuita criada no Google AI Studio.</p>
 
           <div id="keySavedView" class="key-saved-view" hidden>
@@ -134,7 +137,7 @@
       <button id="copyDiagnostic" type="button">Copiar diagnóstico</button>
     </details>
 
-    <div class="toolbar">
+    <div class="toolbar" id="quickTools">
       <button id="scan" type="button">Analisar campos</button>
       <button id="map" type="button">Mapear campos</button>
     </div>
@@ -247,7 +250,7 @@
     </details>
 
     <footer>
-      <a href="#" id="openChangelog" class="version-link">Versão 1.5.13</a> — montagem automática e registro sem cliques inúteis.<br>
+      <a href="#" id="openChangelog" class="version-link">Versão 1.5.15</a> — interface unificada e acessível.<br>
       Os campos identificados serão substituídos. Revise antes de salvar na Amazon.
     </footer>
   </main>

@@ -1,6 +1,13 @@
+# Verificação da interface 1.5.15
+
+106 testes de regressão aprovados. Teste adicional: `npm run test:ui`.
+Os cenários visuais usam Chromium, a interface real e respostas simuladas do Chrome, sem contato com Amazon ou provedores de IA. Consulte LEIA-ME.md para escopo e limitações. Os scripts de negócio anteriores foram comparados com a 1.5.14 e diferem somente na versão.
+
+---
+
 # Verificação da entrega
 
-Data: 16/09/2026. Versão: 1.5.13.
+Data: 16/09/2026. Versão: 1.5.14.
 
 ## Testes executados
 
@@ -65,7 +72,7 @@ Regressão 1.1.1: o teste do painel inclui sender.tab, como no Chrome. Antes da 
 
 1.1.2: testes do cliente e worker reais conectados por portas simuladas, incluindo handshake de versão, chave, projetos, chamadas concorrentes, desconexão e rejeição de origens externas.
 
-Resultado da versão 1.5.13: **99 aprovados, 0 falhas**. Foram acrescentados testes para reconhecer os controles reais registrados na Amazon, ignorar cliques sem efeito, validar prefixos seguros da sequência, preparar os módulos antes do preenchimento e garantir que a preparação não escreva nos campos. Permanecem cobertos mapeamento, medidas, SKU no CSV, revisão e correção seletiva, diagnóstico detalhado, ponte segura, códigos de causa, recuperação de preenchimento, cópia rápida, APIs, planejamento e validação de URL/ASIN. Os testes de navegador não puderam ser executados neste ambiente porque o binário do Chromium do Playwright não está instalado; os testes focados usam mensagens e DOM simulados e não substituem a validação final em uma conta autenticada da Amazon.
+Resultado da versão 1.5.14: **106 aprovados, 0 falhas**. Foram acrescentados testes para os focos comercial e anti-devolução, persistência por produto, importação dos riscos da análise de avaliações, funções específicas dos oito briefings, prompt visual anti-devolução e revisão automática dessa estrutura. Permanecem cobertos montagem dos módulos, mapeamento, medidas, SKU no CSV, revisão e correção seletiva, diagnóstico detalhado, ponte segura, códigos de causa, recuperação de preenchimento, cópia rápida, APIs, planejamento e validação de URL/ASIN. Os testes de navegador não puderam ser executados neste ambiente porque o binário do Chromium do Playwright não está instalado; os testes focados usam mensagens e DOM simulados e não substituem a validação final em uma conta autenticada da Amazon.
 
 Também passaram a verificação de sintaxe de `planning.js`, `openai.js`, `background.js` e `popup.js`, a leitura do `manifest.json` e a conferência de que todos os IDs usados por `popup.js` existem em `popup.html`.
 

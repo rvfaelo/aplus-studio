@@ -1,5 +1,5 @@
 (() => {
-  const contentVersion = globalThis.chrome?.runtime?.getManifest?.().version || "1.5.13";
+  const contentVersion = globalThis.chrome?.runtime?.getManifest?.().version || "1.5.15";
   const pageChannel = `aplus-page-v${contentVersion}`;
   if (globalThis.__aplusPremiumInstalled === contentVersion) return;
   try { globalThis.__aplusPremiumCleanup?.(); } catch { /* Uma versão anterior pode não oferecer limpeza. */ }

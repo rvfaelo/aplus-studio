@@ -1,6 +1,56 @@
+# A+ Studio 1.5.15 — interface unificada
+
+Esta atualização aplica um único layout ao painel, popup, configurações de API e histórico de versões. As cinco etapas do A+, a análise de avaliações, a otimização do anúncio, o planejamento e a auditoria do catálogo continuam disponíveis.
+
+## Atualizar preservando os dados
+
+1. Extraia o ZIP em uma pasta temporária.
+2. Copie o conteúdo de `aplus-studio-v1.5.15` para **a mesma pasta que o Chrome já usa para esta extensão**, substituindo os arquivos. Guarde uma cópia dos arquivos anteriores se quiser poder voltar ao visual anterior.
+3. Em `chrome://extensions`, use **Recarregar** no A+ Studio já instalado. **Não remova a extensão e não limpe seu armazenamento**, pois os projetos e as chaves são locais.
+4. Feche as abas antigas do Studio e abra o painel pelo ícone da extensão. O cabeçalho deve mostrar `1.5.15 conectado`.
+5. Recarregue a aba do Seller Central antes de executar diagnóstico ou preenchimento para atualizar o conector.
+
+## O que mudou
+
+- Navegação lateral para A+ Content e Avaliações e anúncio, com produtos pesquisáveis.
+- Uma mesma identidade visual nas cinco etapas, análise de avaliações, otimização, popup, auditoria, configurações e novidades.
+- Destaque para “Criar planejamento + textos A+”, preservando “Gerar somente textos A+”.
+- Focos comercial e anti-devolução apresentados em cartões de escolha.
+- Campos mais legíveis, alvos principais de 44 px, indicadores de foco, estados de seleção, abas com navegação por setas e nomes acessíveis para controles gerados.
+- Layout adaptável a telas menores e respeito à preferência por movimento reduzido.
+- Briefings em cartões e sequência dos seis módulos visível na etapa Amazon.
+
+## Funções preservadas
+
+Os scripts existentes de geração, projetos, aprovação, preenchimento, diagnóstico, conectores da Amazon e APIs mantêm o código da versão 1.5.14, com somente a atualização do número da versão. A apresentação fica em `studio-ui.css`, nos HTMLs e no novo `studio-ui.js`; este último não acessa armazenamento, serviços de IA ou campos da Amazon. Nenhuma permissão ou dependência de produção foi adicionada.
+
+Catálogo e mapeamento continuam sendo acessados pelo ícone da extensão **com a aba da Amazon ativa**. O popup usa a aba ativa como destino; abrir uma cópia dele numa aba comum não é o fluxo recomendado para capturar ou preencher.
+
+## Validação desta entrega
+
+- 106 testes automatizados existentes passaram.
+- Conferência dos IDs, valores das opções, rotas, permissões e CSP preservados.
+- Testes de interface no Chromium: inicialização, mudança de foco comercial/anti-devolução, edição e salvamento, cópia, navegação por teclado, separação do anúncio, diálogo da chave, diagnóstico e relatório copiável, popup, auditoria e ausência de transbordamento horizontal nas sete telas de trabalho a 390 px.
+- As capturas da prévia usam dados fictícios. Os testes de interface usam o código real da interface e simulam o transporte da API do Chrome. A instalação da extensão completa, APIs pagas e o Seller Central real **não foram exercitados nesta etapa**.
+
+## Reproduzir os testes
+
+`npm test` executa os 106 testes existentes. Para testar a interface, instale as dependências de desenvolvimento e o Chromium do Playwright, depois use `npm run test:ui`. Se necessário, `APLUS_BROWSER_EXECUTABLE` aceita um executável Chromium existente e `APLUS_UI_OUTPUT` define a pasta de capturas. Os exemplos ficam apenas nos testes e não são importados para seus projetos.
+
+---
+
 # A+ Studio
 
-Versão 1.5.13. Extensão Chrome Manifest V3 para organizar, planejar, gerar, revisar, aprovar, montar, preencher e auditar conteúdo Amazon A+, além de analisar avaliações e otimizar anúncios em uma área independente. Usa roteamento entre OpenAI, KiraAI, Gemini, Groq e DeepSeek.
+Versão 1.5.16. Extensão Chrome Manifest V3 para organizar, planejar, gerar, revisar, aprovar, montar, preencher e auditar conteúdo Amazon A+, além de analisar avaliações e otimizar anúncios em uma área independente. Usa roteamento entre OpenAI, xKiro, KiraAI, Gemini e Groq.
+
+### Foco do planejamento 1.5.14
+
+- **Comercial persuasivo · padrão** continua sendo o fluxo normal para benefício, desejo e ocasião de uso.
+- **Clareza anti-devolução** muda os textos e os oito briefings de imagem para explicar exatamente o produto, o que acompanha, escala, material, comportamento, uso correto, medição, compatibilidade e limitações comprovadas.
+- A escolha é salva por produto e não afeta os demais projetos.
+- Reclamações e motivos de devolução podem ser informados manualmente ou importados da análise de avaliações já executada.
+- Cada imagem anti-devolução registra qual dúvida responde, qual risco reduz, o que precisa mostrar e o que não pode sugerir.
+- Os relatos orientam as dúvidas, mas não são usados para inventar especificações; a ficha factual continua sendo a fonte de verdade.
 
 ### Montagem automática 1.5.13
 
@@ -58,7 +108,7 @@ Versão 1.5.13. Extensão Chrome Manifest V3 para organizar, planejar, gerar, re
 
 - Quando houver mais de uma variação confirmada, o Banner principal e o Banner final mostram todas as variações juntas. A regra é incluída nos briefings individuais e no prompt completo.
 - Pessoas entram somente quando ajudam a demonstrar o benefício. Em produtos de uso amplo, os prompts distribuem homens e mulheres entre contextos diferentes; a alternância não é forçada quando não combina com a categoria ou a estratégia.
-- OpenAI API oficial adicionada com GPT-5.6 Luna, Terra e Sol. O modo automático econômico usa Luna quando uma chave OpenAI estiver configurada.
+- OpenAI API oficial disponível com GPT-5.6 Luna, Terra e Sol. No modo automático com prioridade de qualidade, Sol é tentado antes de Terra e Luna quando uma chave OpenAI estiver configurada.
 - Toda chave nova precisa passar pelo botão **Testar chave** antes de ser salva. O teste consulta os modelos liberados sem gerar conteúdo.
 - A chave da OpenAI deve ser criada na plataforma de API e ter faturamento próprio. ChatGPT Plus não inclui créditos de API.
 
@@ -131,15 +181,14 @@ Versão 1.5.13. Extensão Chrome Manifest V3 para organizar, planejar, gerar, re
 - A mensagem de menos de 4 especificações deixou de bloquear a aprovação e o preenchimento; agora é apenas um aviso para revisar a ficha.
 - O botão do Studio procura uma aba aberta do Seller Central na mesma janela, em vez de exigir que a aba ativa seja a Amazon.
 - As especificações restantes continuam sendo reorganizadas em sequência depois que marcadores vazios ou medidas repetidas são removidos.
-- Quatro servidores independentes: Google Gemini, KiraAI.vn, Groq e DeepSeek.
+- Servidores independentes: OpenAI, xKiro, Google Gemini, KiraAI.vn e Groq.
 - KiraAI configurado com os identificadores atuais `qwen3.8-flash` e `glm-5.3-free`.
-- DeepSeek configurado com a API oficial e o modelo `deepseek-flash`; por ser cobrado por uso, fica por último no modo automático.
 - Todas as cinco chaves podem permanecer salvas simultaneamente, inclusive em cópias criptografadas no Chrome Sync.
-- O modo automático prioriza o GLM gratuito e alternativas econômicas; se uma rota falhar ou atingir o limite, passa para a próxima chave configurada.
+- O modo automático prioriza modelos de maior qualidade; se uma rota falhar ou atingir o limite, passa para a próxima chave configurada. No xKiro, a seleção automática fica restrita aos modelos gratuitos do catálogo ao vivo.
 
 ### Ajustes 1.3.0
 
-- Modo automático econômico: GLM 5.3 Free, Gemini e Groq como rotas alternativas quando houver chave configurada.
+- Modo automático com prioridade de qualidade: seleciona modelos mais fortes primeiro. No xKiro, consulta o catálogo ao vivo e escolhe somente entre modelos gratuitos.
 - Uma API Key independente por provedor, todas podendo permanecer salvas ao mesmo tempo.
 - Correções de validação solicitam somente os campos com problema, preservando os campos válidos.
 - Projetos já aprovados não são gerados novamente na fila.
@@ -181,7 +230,7 @@ Os conceitos de diagnóstico, característica-benefício e briefing visual foram
 
 ## Instalar como nova extensão
 
-1. Extraia o ZIP em uma pasta nova e definitiva, por exemplo `Aplus-Studio-1.5.13`.
+1. Extraia o ZIP em uma pasta nova e definitiva, por exemplo `Aplus-Studio-1.5.14`.
 2. Abra `chrome://extensions` no Chrome.
 3. Ative **Modo do desenvolvedor**.
 4. Clique em **Carregar sem compactação**.
@@ -209,7 +258,7 @@ Se a página informar um limite menor, a extensão usa o limite detectado. A ext
 
 1. Abra a extensão em qualquer página.
 2. Informe o título e uma descrição factual completa, com medidas, materiais, compatibilidade, usos e itens inclusos conhecidos.
-3. Configure uma ou mais chaves: KiraAI, Gemini, Groq e/ou DeepSeek.
+3. Configure uma ou mais chaves: xKiro, KiraAI, Gemini, Groq e/ou OpenAI.
 4. Abra **Planejamento e qualidade** e clique em **Analisar produto e criar plano**.
 5. Revise todas as inferências e informações ausentes.
 6. Copie os prompts de imagem ou baixe o plano em TXT.

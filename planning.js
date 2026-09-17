@@ -6,6 +6,22 @@ const clean = (value, max = 1200) => String(value ?? "").normalize("NFC")
   .replace(/\s+/g, " ").trim().slice(0, max);
 
 export function planningInstructions(strategy = null) {
+  const antiReturn = strategy?.planningFocus === "returns";
+  const briefShape = antiReturn
+    ? `{"module":"", "size":"", "goal":"", "scene":"", "composition":"", "prompt":"", "question_answered":"", "return_risk_reduced":"", "must_show":"", "must_not_suggest":"", "overlay_text":""}`
+    : `{"module":"", "size":"", "goal":"", "scene":"", "composition":"", "prompt":""}`;
+  const visualRules = antiReturn ? `
+REGRAS ESPECÍFICAS DO MODO ANTI-DEVOLUÇÃO:
+- As oito imagens devem funcionar como uma demonstração visual do produto. Clareza e compra correta vêm antes da beleza e da emoção.
+- No máximo duas imagens podem ser exclusivamente lifestyle. As demais devem demonstrar produto, conteúdo da compra, escala, material, comportamento físico, uso correto, medição, compatibilidade, instalação ou limitação comprovada.
+- Cada briefing deve responder uma dúvida diferente e preencher question_answered, return_risk_reduced, must_show e must_not_suggest.
+- O Banner principal identifica exatamente o produto; a imagem 2 mostra o que acompanha; a 3 mostra tamanho/escala; a 4 material/comportamento; a 5 uso correto; a 6 medição/compatibilidade/instalação; a 7 limite/expectativa real; o Banner final resume a decisão.
+- Se não houver fato suficiente para uma função, adapte a cena para esclarecer outra dúvida comprovada. Nunca invente uma medida, limitação ou incompatibilidade.
+- Variações no primeiro e último banner devem parecer opções, nunca um kit, salvo quando o conjunto estiver confirmado.
+- Pessoas só entram para demonstrar escala ou uso correto. Nunca use uma pessoa apenas como decoração.
+- overlay_text contém, quando indispensável, uma legenda factual muito curta para ser adicionada DEPOIS por uma camada gráfica. O prompt fotográfico nunca deve pedir à IA para desenhar letras, números ou setas.
+- Para produto infantil, não crie cena que sugira uso sem supervisão, sustentação ou segurança não comprovadas.
+` : "";
   return `Você é um planejador de Amazon A+ Premium em português do Brasil.
 Responda SOMENTE com JSON válido. Não use Markdown.
 
@@ -15,10 +31,11 @@ Use exclusivamente os fatos do título e da descrição. Nunca invente medidas, 
 
 Formato obrigatório:
 {
+  "planning_focus":"${antiReturn ? "returns" : "commercial"}",
   "diagnosis": {"category":"", "audience":"", "audience_is_inference":true, "purchase_moment":"", "main_problem":"", "emotional_desire":"", "main_objection":"", "central_benefit":"", "summary":""},
   "missing_information":[{"field":"", "reason":""}],
   "feature_benefits":[{"feature":"", "benefit":"", "evidence":""}],
-  "image_briefs":[{"module":"", "size":"", "goal":"", "scene":"", "composition":"", "prompt":""}],
+  "image_briefs":[${briefShape}],
   "notes":[""]
 }
 
@@ -43,10 +60,11 @@ Regras:
 - Os banners devem manter produto e elementos essenciais na área central segura de aproximadamente 600 × 450.
 - Os prompts devem pedir produto idêntico à referência, fotografia comercial realista, sem texto, logo, marca d'água, números ou medidas na imagem.
 - Não sugira depoimentos, avaliações, concorrentes, descontos, urgência, garantia ou alegações sem prova.
-- O plano é separado dos textos que serão preenchidos na Amazon.`;
+- O plano é separado dos textos que serão preenchidos na Amazon.
+${visualRules}`;
 }
 
-export function normalizePlan(raw) {
+export function normalizePlan(raw, strategy = null) {
   const issues = [], diagnosis = raw?.diagnosis || {};
   const requiredDiagnosis = ["category", "audience", "main_problem", "central_benefit", "summary"];
   const optionalDiagnosis = ["purchase_moment", "emotional_desire", "main_objection"];
@@ -61,7 +79,10 @@ export function normalizePlan(raw) {
   }) : (issues.push("Uma lista obrigatória está ausente."), []);
   const missingInformation = pairs(raw?.missing_information, ["field", "reason"], 8);
   const featureBenefits = pairs(raw?.feature_benefits, ["feature", "benefit", "evidence"], 8);
-  const imageBriefs = pairs(raw?.image_briefs, ["module", "size", "goal", "scene", "composition", "prompt"], 8);
+  const antiReturn = strategy?.planningFocus === "returns" || raw?.planning_focus === "returns";
+  const imageBriefKeys = ["module", "size", "goal", "scene", "composition", "prompt",
+    ...(antiReturn ? ["question_answered", "return_risk_reduced", "must_show", "must_not_suggest", "overlay_text"] : [])];
+  const imageBriefs = pairs(raw?.image_briefs, imageBriefKeys, 8);
   imageBriefs.forEach((brief, index) => {
     if (index === 0 || index === 7) brief.prompt = clean(`${brief.prompt} Se existirem duas ou mais variações confirmadas do produto nos dados ou nas imagens de referência, mostre todas elas juntas neste banner, sem omitir nenhuma e sem inventar novas variações.`, 3000);
   });
@@ -72,14 +93,16 @@ export function normalizePlan(raw) {
   imageBriefs.forEach((brief, index) => {
     if (brief.size.replace(/x/g, "×").replace(/\s/g, "") !== expectedSizes[index]?.replace(/\s/g, "")) issues.push(`Tamanho incorreto no briefing ${index + 1}.`);
   });
-  const value = {diagnosis: Object.fromEntries([...requiredDiagnosis, ...optionalDiagnosis].map(key => [key, clean(diagnosis[key])])),
+  const value = {planningFocus: antiReturn ? "returns" : "commercial",
+    diagnosis: Object.fromEntries([...requiredDiagnosis, ...optionalDiagnosis].map(key => [key, clean(diagnosis[key])])),
     audienceIsInference: Boolean(diagnosis.audience_is_inference), missingInformation, featureBenefits, imageBriefs,
     notes: Array.isArray(raw?.notes) ? raw.notes.slice(0, 12).map(note => clean(note, 700)) : []};
   return {value, issues};
 }
 
 export async function generatePlan(options) {
-  const plan = await generateStructured({...options, instructions: planningInstructions(options.strategy), validate: normalizePlan});
+  const plan = await generateStructured({...options, instructions: planningInstructions(options.strategy),
+    validate: raw => normalizePlan(raw, options.strategy)});
   if (options.strategy) {
     plan.salesStrategy = compactSalesStrategy(options.strategy);
     plan.categoryChecklist = options.strategy.checklist || [];
@@ -91,6 +114,7 @@ export function buildFullImagePrompt(plan, title = "") {
   const briefs = Array.isArray(plan?.imageBriefs) ? plan.imageBriefs : [];
   if (!briefs.length) return "";
   const product = clean(title, 1000) || clean(plan?.diagnosis?.category, 300) || "produto das imagens de referência";
+  const antiReturn = plan?.planningFocus === "returns" || plan?.salesStrategy?.planningFocus === "returns";
   const lines = [
     `Crie exatamente ${briefs.length} imagens para o produto: ${product}.`,
     "",
@@ -105,6 +129,15 @@ export function buildFullImagePrompt(plan, title = "") {
     "- Produza as imagens na ordem abaixo e respeite exatamente o tamanho indicado para cada uma.",
     ""
   ];
+  if (antiReturn) lines.push(
+    "FOCO CENTRAL: DEMONSTRAÇÃO VISUAL ANTI-DEVOLUÇÃO",
+    "- Prioridade: evitar compra errada, mostrar exatamente o produto e corrigir expectativas antes de persuadir.",
+    "- No máximo duas imagens podem ser exclusivamente lifestyle; as demais devem demonstrar uma informação decisiva.",
+    "- Não esconda limitações comprovadas e não sugira quantidade, escala, firmeza, resistência, segurança ou compatibilidade inexistentes.",
+    "- Pessoas só devem aparecer para explicar escala ou uso correto.",
+    "- Qualquer texto visual indicado abaixo é uma orientação para sobreposição posterior. NÃO renderize letras, números ou setas na fotografia gerada.",
+    ""
+  );
   if (plan?.salesStrategy) {
     lines.push(`Direção de venda: ${clean(plan.salesStrategy.direction, 800)}`,
       `Cliente e desejo: ${clean(plan.salesStrategy.buyer, 700)}; ${clean(plan.salesStrategy.desire, 700)}`,
@@ -115,6 +148,11 @@ export function buildFullImagePrompt(plan, title = "") {
     if (brief.goal) lines.push(`Objetivo: ${clean(brief.goal, 700)}`);
     if (brief.scene) lines.push(`Cena: ${clean(brief.scene, 1000)}`);
     if (brief.composition) lines.push(`Composição: ${clean(brief.composition, 1000)}`);
+    if (antiReturn && brief.question_answered) lines.push(`Dúvida respondida: ${clean(brief.question_answered, 700)}`);
+    if (antiReturn && brief.return_risk_reduced) lines.push(`Risco de devolução reduzido: ${clean(brief.return_risk_reduced, 700)}`);
+    if (antiReturn && brief.must_show) lines.push(`Precisa ficar visível: ${clean(brief.must_show, 900)}`);
+    if (antiReturn && brief.must_not_suggest) lines.push(`Não pode sugerir: ${clean(brief.must_not_suggest, 900)}`);
+    if (antiReturn && brief.overlay_text) lines.push(`Texto visual opcional para adicionar depois, sem renderizar na foto: ${clean(brief.overlay_text, 300)}`);
     lines.push(`Prompt: ${clean(brief.prompt, 3000)}`, "");
   });
   lines.push("Entregue as imagens separadamente, na sequência indicada, nunca reunidas em uma única imagem.");

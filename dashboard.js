@@ -5,7 +5,7 @@ import {connectPanel} from "./panel-connection.js";
 import {providerForModel} from "./providers.js";
 import {buildSalesStrategy} from "./strategy.js";
 import {countReviewEntries, listingOptimizationText, normalizeListingWorkspace,
-  reviewAnalysisText} from "./listing-intelligence.js";
+  reviewAnalysisText, reviewRiskContext} from "./listing-intelligence.js";
 
 const $ = id => document.getElementById(id);
 const send = connectPanel(chrome.runtime);
@@ -26,7 +26,7 @@ let currentTab = "product", currentWorkspace = "aplus", currentIntelligenceTool 
 let keySaved = false;
 let keyStates={};
 let testedKeyCandidate="";
-const providerModel=()=>({openai:"openai-api/gpt-5.6-luna",gemini:"gemini/gemini-3.5-flash",kira:"kira/qwen3.8-flash",groq:"openai/gpt-oss-20b",deepseek:"deepseek/deepseek-flash"})[$("keyProvider").value];
+const providerModel=()=>({openai:"openai-api/gpt-5.6-luna",gemini:"gemini/gemini-3.5-flash",kira:"kira/qwen3.8-flash",groq:"openai/gpt-oss-20b",xkiro:"xkiro/auto-quality"})[$("keyProvider").value];
 const dashboardKeyCandidate=()=>`${$("keyProvider").value}:${$("apiKey").value.trim()}`;
 function resetDashboardKeyTest(message="Teste obrigatório antes de salvar. O teste não gera conteúdo."){
   testedKeyCandidate="";$("keyTestStatus").textContent=message;$("saveKey").disabled=true;$("testKey").disabled=!$("apiKey").value.trim();
@@ -209,7 +209,20 @@ function collectProject() {
   return createProject({...old, asin: $("asin").value, title: $("title").value, description: $("description").value, facts, texts,
     listing: collectListingWorkspace(old),
     config: {model: $("model").value, faqCount: Number($("faqCount").value), specCount: Number($("specCount").value),
-      strategyMode: $("strategyMode").value, templateMode: $("templateMode").value, customStrategy: $("customStrategy").value}});
+      strategyMode: $("strategyMode").value, templateMode: $("templateMode").value, customStrategy: $("customStrategy").value,
+      planningFocus: document.querySelector('input[name="planningFocus"]:checked')?.value || "commercial",
+      returnRiskNotes: $("returnRiskNotes").value}});
+}
+
+function renderPlanningFocus(project = current()) {
+  const focus = document.querySelector('input[name="planningFocus"]:checked')?.value || project?.config?.planningFocus || "commercial";
+  const antiReturn = focus === "returns";
+  $("returnFocusPanel").hidden = !antiReturn;
+  const hasAnalysis = Boolean(project?.listing?.reviewAnalysis);
+  $("importReviewRisks").disabled = !hasAnalysis;
+  $("returnRiskSource").textContent = hasAnalysis
+    ? "Há uma análise de avaliações disponível neste produto. Você pode importar o resumo e editá-lo."
+    : "Nenhuma análise de avaliações está salva. Você pode preencher o campo manualmente.";
 }
 
 function markChanged() {
@@ -218,6 +231,7 @@ function markChanged() {
   project.fillReport = null;
   if (["approved", "filled"].includes(project.status)) project.status = "review";
   $("customStrategyWrap").hidden = $("strategyMode").value !== "custom";
+  renderPlanningFocus(project);
   renderStrategy(collectProject());
   renderHeader(project);
 }
@@ -270,14 +284,17 @@ function renderStrategy(project) {
   previewStrategy = buildSalesStrategy(project || {});
   const strategy = previewStrategy, diagnosis = project?.plan?.diagnosis || {};
   const summary = $("strategySummary"); summary.replaceChildren();
-  for (const text of [strategy.categoryLabel, strategy.modeLabel]) {
+  summary.closest(".strategy-card")?.classList.toggle("anti-return", strategy.planningFocus === "returns");
+  for (const text of [strategy.categoryLabel, strategy.focusLabel, strategy.modeLabel]) {
     const tag = document.createElement("span"); tag.textContent = text; summary.append(tag);
+    if (strategy.planningFocus === "returns" && text === strategy.focusLabel) tag.classList.add("anti-return");
   }
   const insights = [
     ["Quem compra", diagnosis.audience || strategy.buyer],
     ["Dor principal", diagnosis.main_problem || strategy.pain],
     ["Desejo", diagnosis.emotional_desire || strategy.desire],
-    ["Objeções", diagnosis.main_objection || strategy.objections]
+    ["Objeções", diagnosis.main_objection || strategy.objections],
+    ...(strategy.planningFocus === "returns" ? [["Risco central", strategy.riskContext || "Informe o problema de expectativa ou importe a análise de avaliações."]] : [])
   ];
   $("strategyInsights").replaceChildren(...insights.map(([label, value]) => {
     const row = document.createElement("div"), strong = document.createElement("strong"), p = document.createElement("p");
@@ -347,10 +364,18 @@ function renderImages(project) {
     const row = document.createElement("div"); row.className = "brief-row";
     const h = document.createElement("h4"); h.textContent = `${index + 1}. ${brief.module} · ${brief.size}`;
     const angle = project.plan?.salesStrategy?.angles?.find(item => item.module === brief.module);
-    const details = document.createElement("p"); details.textContent = `${angle ? `Ângulo de venda: ${angle.angle} · ${angle.categoryFocus} | ` : ""}Objetivo: ${brief.goal} | Cena: ${brief.scene} | Composição: ${brief.composition}`;
+    const details = document.createElement("p"); details.textContent = `${angle ? `Ângulo: ${angle.angle} · ${angle.categoryFocus} | ` : ""}Objetivo: ${brief.goal} | Cena: ${brief.scene} | Composição: ${brief.composition}`;
     const prompt = document.createElement("p"); prompt.className = "brief-prompt"; prompt.textContent = brief.prompt;
     const copy = document.createElement("button"); copy.textContent = "Copiar prompt"; copy.onclick = () => navigator.clipboard.writeText(brief.prompt).then(() => toast("Prompt copiado."));
-    row.append(h, details, prompt, copy); box.append(row);
+    row.append(h, details);
+    if (project.config?.planningFocus === "returns") {
+      const clarity = document.createElement("p"); clarity.className = "brief-clarity";
+      clarity.textContent = [`Dúvida: ${brief.question_answered || "não informada"}`, `Risco reduzido: ${brief.return_risk_reduced || "não informado"}`,
+        `Mostrar: ${brief.must_show || "não informado"}`, `Não sugerir: ${brief.must_not_suggest || "não informado"}`,
+        brief.overlay_text ? `Texto opcional posterior: ${brief.overlay_text}` : ""].filter(Boolean).join(" | ");
+      row.append(clarity);
+    }
+    row.append(prompt, copy); box.append(row);
   });
 }
 
@@ -567,9 +592,12 @@ function renderEditor() {
   const project = current(); renderWorkspaceVisibility(); if (!project) return;
   renderHeader(project); $("asin").value = project.asin || ""; $("title").value = project.title || ""; $("description").value = project.description || "";
   const oldModel = project.config?.model;
-  $("model").value = oldModel === "gemini/gemini-2.5-flash" ? "gemini/gemini-3.5-flash" : oldModel === "gemini/gemini-2.5-flash-lite" ? "gemini/gemini-3.5-flash-lite" : oldModel || "auto/economico"; $("faqCount").value = project.config?.faqCount || 5; $("specCount").value = project.config?.specCount || 6;
+  $("model").value = oldModel === "gemini/gemini-2.5-flash" ? "gemini/gemini-3.5-flash" : oldModel === "gemini/gemini-2.5-flash-lite" ? "gemini/gemini-3.5-flash-lite" : oldModel === "deepseek/deepseek-flash" ? "xkiro/auto-quality" : oldModel || "auto/economico"; $("faqCount").value = project.config?.faqCount || 5; $("specCount").value = project.config?.specCount || 6;
   $("strategyMode").value = project.config?.strategyMode || "auto"; $("templateMode").value = project.config?.templateMode || "auto";
   $("customStrategy").value = project.config?.customStrategy || ""; $("customStrategyWrap").hidden = $("strategyMode").value !== "custom";
+  const focus = project.config?.planningFocus === "returns" ? "returns" : "commercial";
+  const focusInput = document.querySelector(`input[name="planningFocus"][value="${focus}"]`); if (focusInput) focusInput.checked = true;
+  $("returnRiskNotes").value = project.config?.returnRiskNotes || ""; renderPlanningFocus(project);
   renderFacts(project); renderStrategy(project); renderTexts(project); renderImages(project); renderValidation(project); renderFillResult(project.fillReport);
   renderIntelligence(project); switchTab(currentTab); renderWorkspaceVisibility();
 }
@@ -636,7 +664,15 @@ $("apiKey").addEventListener("input",()=>resetDashboardKeyTest());
 $("saveProject").onclick = () => save(true).catch(error => toast(error.message, true));
 $("addFact").onclick = () => $("facts").append(factRow());
 $("projectSearch").addEventListener("input", renderProjects);
-for (const id of ["asin", "title", "description", "model", "faqCount", "specCount", "strategyMode", "templateMode", "customStrategy"]) $(id).addEventListener("input", markChanged);
+for (const id of ["asin", "title", "description", "model", "faqCount", "specCount", "strategyMode", "templateMode", "customStrategy", "returnRiskNotes"]) $(id).addEventListener("input", markChanged);
+for (const input of document.querySelectorAll('input[name="planningFocus"]')) input.addEventListener("change", markChanged);
+$("importReviewRisks").onclick = () => {
+  const context = reviewRiskContext(current()?.listing?.reviewAnalysis);
+  if (!context) return toast("Analise as avaliações deste produto antes de importar os riscos.", true);
+  $("returnRiskNotes").value = context;
+  markChanged();
+  toast("Problemas de expectativa importados. Revise antes de gerar o A+.");
+};
 $("addMissingFacts").onclick = () => {
   const existing = new Set([...$("facts").querySelectorAll(".fact-row input:first-child")]
     .map(input => input.value.trim().toLocaleLowerCase("pt-BR")));
@@ -868,7 +904,7 @@ $("deleteProject").onclick = async () => {
 };
 $("exportTexts").onclick = () => {
   const project = collectProject(); if (!project) return; const slots = project.slots?.length ? project.slots : makeSlots(project.config);
-  const lines = [`A+ STUDIO 1.5.13 · ${project.title}`, project.asin, "", ...slots.flatMap(slot => [slot.label, project.texts[slot.key] || "", ""]), "OBSERVAÇÕES", ...project.notes];
+  const lines = [`A+ STUDIO 1.5.15 · ${project.title}`, project.asin, "", ...slots.flatMap(slot => [slot.label, project.texts[slot.key] || "", ""]), "OBSERVAÇÕES", ...project.notes];
   const blob = new Blob(["\ufeff" + lines.join("\r\n")], {type:"text/plain;charset=utf-8"}), url = URL.createObjectURL(blob), link = document.createElement("a");
   link.href = url; link.download = `${project.asin || "produto"}-textos-aplus.txt`; link.click(); setTimeout(() => URL.revokeObjectURL(url), 2000);
 };
@@ -876,10 +912,10 @@ $("exportTexts").onclick = () => {
 async function initializePanel() {
   const label = document.querySelector(".topbar h1");
   $("listingModel").replaceChildren(...[...$("model").options].map(option => option.cloneNode(true)));
-  label.textContent = "A+ Studio · painel 1.5.13";
+  label.textContent = "A+ Studio · painel 1.5.16";
   try {
     const hello = await send("panelHello");
-    if (hello.version !== "1.5.13") throw new Error(`Painel 1.5.13 conectado à extensão ${hello.version}. Substitua os arquivos na pasta instalada e recarregue a extensão.`);
+    if (hello.version !== "1.5.16") throw new Error(`Painel 1.5.16 conectado à extensão ${hello.version}. Substitua os arquivos na pasta instalada e recarregue a extensão.`);
     label.textContent = `A+ Studio · ${hello.version} conectado`;
     await refresh();
     const recorderState = await send("projectModuleRecordStatus");

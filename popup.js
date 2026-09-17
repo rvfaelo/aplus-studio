@@ -13,9 +13,9 @@ let keyStates={},cloudKeyStates={};
 let auditLatest = null, auditItems = [], auditLocked = false;
 let planningLatest = null, planResult = null, qualityResult = null, planningLocked = false;
 const editableFields = ["title", "description", "model", "customModel", "faqCount", "specCount", "apiKey", "cloudPassphrase"];
-const MODEL_MIGRATIONS = Object.freeze({"gemini/gemini-2.5-flash":"gemini/gemini-3.5-flash","gemini/gemini-2.5-flash-lite":"gemini/gemini-3.5-flash-lite","tokenrouter/z-ai/glm-5.3-free":"kira/glm-5.3-free"});
+const MODEL_MIGRATIONS = Object.freeze({"gemini/gemini-2.5-flash":"gemini/gemini-3.5-flash","gemini/gemini-2.5-flash-lite":"gemini/gemini-3.5-flash-lite","tokenrouter/z-ai/glm-5.3-free":"kira/glm-5.3-free","deepseek/deepseek-flash":"xkiro/auto-quality"});
 const selectedModel = () => $("model").value === "custom" ? $("customModel").value.trim() : $("model").value;
-const providerModel=()=>({openai:"openai-api/gpt-5.6-luna",gemini:"gemini/gemini-3.5-flash",kira:"kira/qwen3.8-flash",groq:"openai/gpt-oss-20b",deepseek:"deepseek/deepseek-flash"})[$("keyProvider").value];
+const providerModel=()=>({openai:"openai-api/gpt-5.6-luna",gemini:"gemini/gemini-3.5-flash",kira:"kira/qwen3.8-flash",groq:"openai/gpt-oss-20b",xkiro:"xkiro/auto-quality"})[$("keyProvider").value];
 const selectedProvider=()=>providerForModel(selectedModel())==="auto"?"gemini":providerForModel(selectedModel());
 const selectProviderState=()=>{const provider=$("keyProvider").value,local=keyStates[provider]||{} ,cloud=cloudKeyStates[provider]||{};replaceMode=false;resetKeyTest();keyState(!!local.saved,local.fingerprint);cloudKeyState(!!cloud.saved,cloud.fingerprint);};
 const rawConfig = () => ({model: selectedModel(), faqCount: Number($("faqCount").value), specCount: Number($("specCount").value)});
@@ -249,7 +249,9 @@ function keyState(has, fingerprint, initial = false) {
   } else {
     $("keyHint").textContent = $("keyProvider").value === "openai"
       ? "Use uma chave da plataforma OpenAI com faturamento próprio. A assinatura ChatGPT Plus não inclui créditos de API."
-      : "Cole a chave do provedor, teste a conexão e salve somente após a confirmação.";
+      : $("keyProvider").value === "xkiro"
+        ? "No xKiro, o modo recomendado escolhe automaticamente o modelo gratuito de maior qualidade disponível no catálogo ao vivo."
+        : "Cole a chave do provedor, teste a conexão e salve somente após a confirmação.";
     $("cancelReplace").hidden = true;
     $("applyKey").textContent = "Salvar chave testada";
   }
