@@ -1,12 +1,15 @@
+import {abortError} from "./generation-policy.js";
 import {buildSchema, generationInstructions, normalizeAndValidate} from "./shared.js";
 import {errorDiagnostic} from "./diagnostics.js";
-import {providerForModel, modelForRequest, chooseXkiroQualityModel, XKIRO_AUTO_QUALITY_MODEL} from "./providers.js";
+import {providerForModel, modelForRequest, chooseXkiroQualityModel, XKIRO_AUTO_QUALITY_MODEL, isOpenRouterFree, freeTaskScore} from "./providers.js";
 
 const OPENAI_ENDPOINTS = Object.freeze({
   openai: "https://api.openai.com/v1/chat/completions",
   groq: "https://api.groq.com/openai/v1/chat/completions",
   kira: "https://kiraai.vn/api/v1/chat/completions",
-  xkiro: "https://api.xkiro.com/v1/chat/completions"
+  xkiro: "https://api.xkiro.com/v1/chat/completions",
+  openrouter: "https://openrouter.ai/api/v1/chat/completions"
+  ,deepseek: "https://api.deepseek.com/chat/completions"
 });
 const INITIAL_OUTPUT_TOKENS = 2600;
 const RECOVERY_OUTPUT_TOKENS = 6000;
@@ -63,12 +66,56 @@ function isGemini(model) { return String(model).startsWith("gemini/"); }
 function geminiModel(model) { return String(model).replace(/^gemini\//, ""); }
 function outputBudget(slots) { return Math.min(INITIAL_OUTPUT_TOKENS, Math.max(700, Math.ceil(slots.reduce((n,s)=>n+s.limit,0)/4)+350)); }
 
+function jsonStrictAvailable(provider, routerModel = null) {
+  if (provider === "gemini") return true;
+  if (provider === "kira" || provider === "xkiro") return false;
+  return !routerModel || routerModel.supported_parameters?.includes("response_format");
+}
+
+function extractBalancedJson(text) {
+  const raw = String(text || "").trim().replace(/^```(?:json)?\s*/i, "").replace(/```$/i, "").trim();
+  const direct = raw.match(/^\s*(\{[\s\S]*\})\s*$/);
+  if (direct) return direct[1];
+  const start = raw.indexOf("{");
+  if (start < 0) return raw;
+  let depth = 0, inString = false, escaped = false;
+  for (let index = start; index < raw.length; index++) {
+    const char = raw[index];
+    if (escaped) { escaped = false; continue; }
+    if (char === "\\") { escaped = inString; continue; }
+    if (char === '"') { inString = !inString; continue; }
+    if (inString) continue;
+    if (char === "{") depth++;
+    if (char === "}") {
+      depth--;
+      if (depth === 0) return raw.slice(start, index + 1);
+    }
+  }
+  const fallback = raw.match(/\{[\s\S]*\}/);
+  return fallback ? fallback[0] : raw;
+}
+
+function parseJsonObject(text) {
+  const candidate = extractBalancedJson(text);
+  try { return {value: JSON.parse(candidate), repaired: false}; } catch { /* tenta reparos seguros abaixo */ }
+  const repaired = candidate
+    .replace(/,\s*([}\]])/g, "$1")
+    .replace(/\uFEFF/g, "")
+    .trim();
+  if (repaired !== candidate) {
+    try { return {value: JSON.parse(repaired), repaired: true}; } catch { /* mantém erro original */ }
+  }
+  return null;
+}
+
 const MODEL_LIST_ENDPOINTS = Object.freeze({
   openai: "https://api.openai.com/v1/models",
   groq: "https://api.groq.com/openai/v1/models",
   kira: "https://kiraai.vn/api/v1/models",
   xkiro: "https://api.xkiro.com/v1/models",
+  openrouter: "https://openrouter.ai/api/v1/models",
   gemini: "https://generativelanguage.googleapis.com/v1beta/models"
+  ,deepseek: "https://api.deepseek.com/models"
 });
 
 const XKIRO_USAGE_ENDPOINT = "https://api.xkiro.com/v1/usage";
@@ -76,9 +123,9 @@ let xkiroCatalogCache = null;
 
 function xkiroAuto(model) { return String(model) === XKIRO_AUTO_QUALITY_MODEL; }
 
-async function fetchXkiroCatalog({apiKey, fetcher = fetch, force = false} = {}) {
+async function fetchXkiroCatalog({apiKey, fetcher = fetch, force = false, signal} = {}) {
   if (!force && xkiroCatalogCache && Date.now() - xkiroCatalogCache.at < 5 * 60 * 1000) return xkiroCatalogCache.models;
-  const response = await fetcher(MODEL_LIST_ENDPOINTS.xkiro, {method: "GET", credentials: "omit", redirect: "error",
+  const response = await fetcher(MODEL_LIST_ENDPOINTS.xkiro, {signal, method: "GET", credentials: "omit", redirect: "error",
     headers: apiKey ? {Authorization: `Bearer ${apiKey}`} : {}});
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) throw apiFailure(response.status, payload, {model: XKIRO_AUTO_QUALITY_MODEL, event: "xkiro_models"});
@@ -87,13 +134,40 @@ async function fetchXkiroCatalog({apiKey, fetcher = fetch, force = false} = {}) 
   return models;
 }
 
-async function resolveXkiroModel(model, apiKey, fetcher = fetch) {
+async function resolveXkiroModel(model, apiKey, fetcher = fetch, signal) {
   if (!xkiroAuto(model)) return {id: modelForRequest(model), metadata: null};
-  const models = await fetchXkiroCatalog({apiKey, fetcher});
+  const models = await fetchXkiroCatalog({apiKey, fetcher, signal});
   const selected = chooseXkiroQualityModel(models);
   if (!selected) throw new GenerationError("Nenhum modelo gratuito de chat foi encontrado no catálogo atual do xKiro.", "xkiro_no_free_model", false,
     {model, event: "xkiro_model_select"});
   return {id: String(selected.id), metadata: selected};
+}
+
+let openRouterCache = null;
+export async function freeCatalog(provider, apiKey, signal, fetcher = fetch, force = false) {
+  if (provider === "xkiro") return fetchXkiroCatalog({apiKey,signal,fetcher,force});
+  if (provider !== "openrouter") throw new Error("Catálogo não reconhecido.");
+  if (!force && openRouterCache && Date.now()-openRouterCache.at<300000) return openRouterCache.models;
+  const response = await fetcher(MODEL_LIST_ENDPOINTS.openrouter, {method:"GET",signal,credentials:"omit",redirect:"error"});
+  const payload=await response.json().catch(()=>({}));
+  if (!response.ok) throw apiFailure(response.status,payload,{model:"openrouter/auto-free",event:"models"});
+  const models=(Array.isArray(payload.data)?payload.data:[]).filter(isOpenRouterFree);
+  openRouterCache={at:Date.now(),models};
+  return models;
+}
+async function openRouterModel(model,apiKey,signal,fetcher) {
+  const models=await freeCatalog("openrouter",apiKey,signal,fetcher);
+  const selected=model==="openrouter/auto-free" ? [...models].sort((a,b)=>freeTaskScore(b)-freeTaskScore(a))[0] : models.find(item=>item.id===modelForRequest(model));
+  if (!selected) throw new Error("Modelo OpenRouter ausente do catálogo gratuito. Nenhum modelo pago será usado.");
+  return selected;
+}
+function waitForRetry(milliseconds,signal) {
+  return new Promise((resolve,reject)=>{
+    if (signal?.aborted) return reject(abortError(signal));
+    const stop=()=>{clearTimeout(timer);reject(abortError(signal));};
+    const timer=setTimeout(()=>{signal?.removeEventListener("abort",stop);resolve();},milliseconds);
+    signal?.addEventListener("abort",stop,{once:true});
+  });
 }
 
 // Valida autenticação sem gerar conteúdo nem consumir tokens. A listagem também
@@ -106,6 +180,16 @@ export async function testApiKey({apiKey, model, fetcher = fetch}) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 20000);
   try {
+    if (provider === "openrouter") {
+      const response=await fetcher("https://openrouter.ai/api/v1/key",{method:"GET",credentials:"omit",redirect:"error",signal:controller.signal,headers:{Authorization:`Bearer ${key}`}});
+      const payload=await response.json().catch(()=>({}));
+      if (!response.ok) throw apiFailure(response.status,payload,{model,secrets:[key],event:"key_test"});
+      if (!payload.data || typeof payload.data!=="object") throw new Error("O OpenRouter não confirmou a autenticação.");
+      const models=await freeCatalog("openrouter",key,controller.signal,fetcher,true);
+      const selected=[...models].sort((a,b)=>freeTaskScore(b)-freeTaskScore(a))[0];
+      if (!selected) throw new Error("Chave válida, mas nenhum modelo gratuito adequado foi encontrado.");
+      return {valid:true,provider,model:selected.id,modelAvailable:true,modelCount:models.length,selectedAutomatically:true};
+    }
     if (provider === "xkiro") {
       // /v1/models é público no xKiro; /v1/usage exige autenticação e é gratuito,
       // por isso ele é usado para validar de verdade a chave sem gastar tokens.
@@ -113,7 +197,7 @@ export async function testApiKey({apiKey, model, fetcher = fetch}) {
         headers: {Authorization: `Bearer ${key}`}, signal: controller.signal});
       const usage = await usageResponse.json().catch(() => ({}));
       if (!usageResponse.ok) throw apiFailure(usageResponse.status, usage, {model, secrets: [key], event: "key_test"});
-      const models = await fetchXkiroCatalog({apiKey: key, fetcher, force: true});
+      const models = await fetchXkiroCatalog({apiKey: key, fetcher, force: true, signal: controller.signal});
       const selected = xkiroAuto(model) ? chooseXkiroQualityModel(models) : models.find(item => String(item?.id||"") === modelForRequest(model));
       if (xkiroAuto(model) && !selected) throw new Error("A chave é válida, mas o xKiro não publicou nenhum modelo gratuito de chat neste momento.");
       return {valid: true, provider, model: selected?.id || modelForRequest(model), modelAvailable: !!selected, modelCount: models.length,
@@ -134,6 +218,79 @@ export async function testApiKey({apiKey, model, fetcher = fetch}) {
     if (error instanceof TypeError) throw new Error("Não foi possível conectar ao provedor para testar a chave.");
     throw error;
   } finally { clearTimeout(timer); }
+}
+
+function modelTestStatus(status, code = "") {
+  if (status === 401) return "key_error";
+  if ([400,403,404].includes(status) || ["model_not_found","permission_denied","unsupported_model"].includes(code)) return "unavailable";
+  if (status === 408 || status === 429 || status >= 500) return "temporary";
+  return "unstable";
+}
+
+async function probeOneModel({apiKey, model, provider, purpose = "texts", fetcher = fetch}) {
+  purpose=purpose==="planning"?"planning":"texts";
+  const startedAt=Date.now(),controller=new AbortController();
+  const timer=setTimeout(()=>controller.abort(),15000);
+  try {
+    let requestModel=modelForRequest(model),endpoint=OPENAI_ENDPOINTS[provider],body,routerModel=null;
+    if(provider==="xkiro")requestModel=(await resolveXkiroModel(model,apiKey,fetcher,controller.signal)).id;
+    if(provider==="openrouter"){routerModel=await openRouterModel(model,apiKey,controller.signal,fetcher);requestModel=routerModel.id;}
+    const expected=purpose==="planning"
+      ? {image_briefs:[{module:"Banner principal",size:"1464 × 600",goal:"Mostrar o produto",scene:"Fundo claro",composition:"Produto central",prompt:"Fotografia realista",overlay_text:""}]}
+      : {texts:{probe:"Texto A+ válido"},notes:[]};
+    const instruction=`Teste de compatibilidade para ${purpose==="planning"?"briefings de imagem":"Textos A+"}. Retorne somente este JSON válido, sem Markdown: ${JSON.stringify(expected)}`;
+    if(provider==="gemini"){
+      endpoint=`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(requestModel)}:generateContent`;
+      body={contents:[{role:"user",parts:[{text:instruction}]}],generationConfig:{temperature:0,maxOutputTokens:300,responseMimeType:"application/json"}};
+    }else body={model:requestModel,messages:[{role:"user",content:instruction}],stream:false,temperature:0,max_tokens:300};
+    if(jsonStrictAvailable(provider,routerModel))body.response_format={type:"json_object"};
+    if(provider==="openai"){delete body.max_tokens;delete body.temperature;body.max_completion_tokens=300;}
+    if(provider==="openrouter")body.provider={max_price:{prompt:0,completion:0}};
+    const headers={"Content-Type":"application/json",...(provider==="gemini"?{"x-goog-api-key":apiKey}:{Authorization:`Bearer ${apiKey}`})};
+    const response=await fetcher(endpoint,{method:"POST",signal:controller.signal,credentials:"omit",redirect:"error",headers,body:JSON.stringify(body)});
+    const payload=await response.json().catch(()=>({}));
+    if(!response.ok){
+      const diagnostic=errorDiagnostic(payload,{model,httpStatus:response.status,event:"model_probe"});
+      return {model,resolvedModel:requestModel,status:modelTestStatus(response.status,diagnostic.code||diagnostic.type),httpStatus:response.status,
+        reason:apiError(response.status,diagnostic.code||diagnostic.type,diagnostic.param,diagnostic.message),elapsedMs:Date.now()-startedAt};
+    }
+    const content=provider==="gemini"?payload.candidates?.[0]?.content?.parts?.map(part=>part.text||"").join(""):
+      payload.choices?.[0]?.message?.content;
+    const parsed=parseJsonObject(content);
+    const valid=purpose==="planning" ? Array.isArray(parsed?.value?.image_briefs)&&parsed.value.image_briefs.length===1
+      : typeof parsed?.value?.texts?.probe==="string"&&Array.isArray(parsed.value.notes);
+    return {model,resolvedModel:requestModel,purpose,status:valid?"working":"unstable",httpStatus:response.status,
+      reason:valid?`${purpose==="planning"?"Briefing":"Texto A+"} em JSON validado`:String(content||"").trim()?"Resposta recebida, mas o JSON exigido não foi obedecido":"O modelo respondeu sem texto",elapsedMs:Date.now()-startedAt};
+  }catch(error){
+    if(controller.signal.aborted)return {model,resolvedModel:modelForRequest(model),status:"temporary",httpStatus:0,reason:"Tempo de espera excedido",elapsedMs:Date.now()-startedAt};
+    return {model,resolvedModel:modelForRequest(model),status:"temporary",httpStatus:Number(error?.diagnostic?.httpStatus||0),
+      reason:String(error?.message||"Falha temporária de conexão").slice(0,300),elapsedMs:Date.now()-startedAt};
+  }finally{clearTimeout(timer);}
+}
+
+// Faz uma chamada mínima real. Listar modelos confirma catálogo, mas não confirma
+// que a conta consegue gerar com cada um.
+export async function testProviderModels({apiKey,provider,models,fetcher=fetch,onResult=()=>{}}) {
+  const key=String(apiKey||"").trim();
+  if(!key)throw new Error("Nenhuma chave salva para este provedor.");
+  const requested=[...new Set((Array.isArray(models)?models:[]).filter(model=>providerForModel(model)===provider))].slice(0,12);
+  if(!requested.length)throw new Error("Nenhum modelo configurado para este provedor.");
+  const results=[];
+  for(const model of requested){
+    const tasks={};
+    for(const purpose of ["texts","planning"]){
+      tasks[purpose]=await probeOneModel({apiKey:key,model,provider,purpose,fetcher});
+      if(tasks[purpose].status==="key_error")break;
+    }
+    const taskRows=Object.values(tasks),working=taskRows.filter(row=>row.status==="working").length;
+    const status=working===2?"working":working?"partial":taskRows[0]?.status||"temporary";
+    const result={model,resolvedModel:taskRows.find(row=>row.resolvedModel)?.resolvedModel||modelForRequest(model),status,tasks,
+      elapsedMs:taskRows.reduce((sum,row)=>sum+Number(row.elapsedMs||0),0),
+      reason:[tasks.texts&&`Textos: ${tasks.texts.reason}`,tasks.planning&&`Briefings: ${tasks.planning.reason}`].filter(Boolean).join(" · ")};
+    results.push(result);onResult(result);
+    if(taskRows.some(row=>row.status==="key_error"))break;
+  }
+  return {provider,testedAt:Date.now(),results};
 }
 
 function apiFailure(status, payload, context = {}) {
@@ -163,7 +320,18 @@ export async function readResponseStream(response, onProgress = () => {}, contex
 
   try {
     for (;;) {
-      const {value, done} = await reader.read();
+      let idleTimer;
+      const idleMs=Number(context.streamIdleTimeoutMs||15000);
+      let packet;
+      try {
+        packet=await Promise.race([
+          reader.read(),
+          new Promise((_,reject)=>{idleTimer=setTimeout(()=>reject(new GenerationError(
+            "O modelo parou de enviar a resposta. O automático tentará outro modelo.","stream_idle_timeout",true,
+            {...diagnosticContext,event:"stream_idle_timeout"})),idleMs);})
+        ]);
+      } finally {clearTimeout(idleTimer);}
+      const {value, done} = packet;
       const chunk = done ? decoder.decode() : decoder.decode(value, {stream: true});
       buffer += chunk;
       received += chunk.length;
@@ -211,18 +379,15 @@ export async function readResponseStream(response, onProgress = () => {}, contex
     throw new Error("A API não retornou nenhum texto. Tente novamente.");
   }
 
-  let cleaned = fullContent.trim();
-  const jsonMatch = cleaned.match(/\{[\s\S]*\}/);
-  if (jsonMatch) cleaned = jsonMatch[0];
-
-  try {
-    return JSON.parse(cleaned);
-  } catch {
-    throw new GenerationError(
-      "A API não retornou o JSON esperado. Tente novamente ou escolha outro modelo.",
-      "json_validate_failed", false, {...diagnosticContext, event: "json_parse_failed"}
-    );
+  const parsed = parseJsonObject(fullContent);
+  if (parsed) {
+    return parsed.value;
   }
+  throw new GenerationError(
+    "A API não retornou o JSON esperado. O automático tentará outro modelo quando possível.",
+    "json_validate_failed", false, {...diagnosticContext, event: "json_parse_failed",
+      responseChars: fullContent.length}
+  );
 }
 
 export function apiError(status, code, param, remoteMessage) {
@@ -238,7 +403,7 @@ export function apiError(status, code, param, remoteMessage) {
   if (["content_filter", "content_policy_violation"].includes(code)) return "A API interrompeu a resposta por filtro de conteúdo. Revise os dados do produto.";
   if (code === "context_length_exceeded") return "O produto e o pedido excederam a janela de contexto do modelo. Reduza a descrição.";
   if (code === "max_output_tokens" || code === "max_tokens") return "A resposta atingiu o limite de tokens de saída.";
-  if (code === "json_validate_failed") return "O modelo não gerou um JSON válido. Tentando novamente sem o validador estrito…";
+  if (code === "json_validate_failed") return "O modelo não gerou um JSON válido. O automático tentará outro modelo quando possível.";
   if (status === 400 || ["invalid_request_error", "unsupported_parameter", "unsupported_value"].includes(code)) {
     return "A API rejeitou a configuração. Confira o modelo selecionado.";
   }
@@ -254,18 +419,18 @@ async function request({apiKey, model, input, instructions, signal, onProgress, 
   const gemini = isGemini(model);
   let reason = "";
   const stop = () => controller.abort();
-  if (signal?.aborted) throw new Error("Operação cancelada.");
+  if (signal?.aborted) throw abortError(signal);
   signal?.addEventListener("abort", stop, {once: true});
 
   const headerTimer = setTimeout(() => {
     reason = "A API demorou para responder. Tente novamente.";
     controller.abort();
-  }, gemini ? 90000 : 25000);
+  }, gemini ? 20000 : 12000);
 
   const totalTimer = setTimeout(() => {
-    reason = gemini ? "A geração no Gemini excedeu 4 minutos. Tente novamente." : "A geração excedeu 120 segundos. Tente novamente ou escolha outro modelo.";
+    reason = "A geração excedeu 45 segundos. O automático tentará outro modelo.";
     controller.abort();
-  }, gemini ? 240000 : 120000);
+  }, 45000);
 
   try {
     if (gemini) {
@@ -284,7 +449,9 @@ async function request({apiKey, model, input, instructions, signal, onProgress, 
       const text = payload.candidates?.[0]?.content?.parts?.map(p => p.text || "").join("").trim();
       if (!text) throw new GenerationError("O Gemini não retornou texto. Tente novamente.", "empty_response", true, {...context, event: "empty_response"});
       if (typeof onProgress === "function") onProgress(text.length);
-      try { return JSON.parse(text); } catch { throw new GenerationError("O Gemini não retornou o JSON esperado. Tentando novamente…", "json_validate_failed", false, {...context, event: "json_parse_failed"}); }
+      const parsed = parseJsonObject(text);
+      if (parsed) return parsed.value;
+      throw new GenerationError("O Gemini não retornou o JSON esperado. Tentando novamente…", "json_validate_failed", false, {...context, event: "json_parse_failed", strictJsonApplied: true, responseChars: text.length});
     }
     const messages = [
       {role: "system", content: instructions},
@@ -295,16 +462,23 @@ async function request({apiKey, model, input, instructions, signal, onProgress, 
     ];
 
     const provider=providerForModel(model);
-    const xkiroResolved = provider === "xkiro" ? await resolveXkiroModel(model, apiKey, fetcher) : null;
-    const requestModel=xkiroResolved?.id || modelForRequest(model);
+    const xkiroResolved = provider === "xkiro" ? await resolveXkiroModel(model, apiKey, fetcher, controller.signal) : null;
+    const routerModel = provider === "openrouter" ? await openRouterModel(model,apiKey,controller.signal,fetcher) : null;
+    const requestModel=routerModel?.id || xkiroResolved?.id || modelForRequest(model);
     const body = provider === "openai"
       ? {model:requestModel, messages, stream: true, max_completion_tokens: maxOutputTokens}
       : {model:requestModel, messages, stream: true, temperature: 0.4, max_tokens: maxOutputTokens};
     // KiraAI e o catálogo gratuito do xKiro misturam modelos com suporte desigual
     // a response_format. O prompt ainda exige JSON e a resposta é validada localmente.
-    if (strictJson && provider!=="kira" && provider!=="xkiro") body.response_format = {type: "json_object"};
+    const strictJsonApplied = Boolean(strictJson && jsonStrictAvailable(provider, routerModel));
+    if (strictJsonApplied) body.response_format = {type: "json_object"};
     const effort = reasoningEffortFor(model);
     if (effort) body.reasoning_effort = effort;
+    if (routerModel) {
+      body.provider = {max_price:{prompt:0,completion:0}};
+      if (!routerModel.supported_parameters?.includes("temperature")) delete body.temperature;
+      if (routerModel.supported_parameters?.includes("reasoning")) body.reasoning={effort:"low"};
+    }
 
     const endpoint=OPENAI_ENDPOINTS[provider];
     if(!endpoint) throw new GenerationError("Provedor não reconhecido para este modelo.","provider_not_found",false,{model,provider,event:"provider_error"});
@@ -333,7 +507,8 @@ async function request({apiKey, model, input, instructions, signal, onProgress, 
       model: provider === "xkiro" ? `${model} -> ${requestModel}` : model, maxOutputTokens, attempt,
       secrets: [apiKey, ...(secrets || [])],
       httpStatus: response.status,
-      requestId: response.headers.get("x-request-id")
+      requestId: response.headers.get("x-request-id"),
+      strictJsonApplied
     };
 
     if (!response.ok) {
@@ -341,10 +516,10 @@ async function request({apiKey, model, input, instructions, signal, onProgress, 
       throw apiFailure(response.status, errorBody, {...diagnosticContext, event: "http_error"});
     }
 
-    return await readResponseStream(response, onProgress, diagnosticContext);
+    return await readResponseStream(response, onProgress, {...diagnosticContext,streamIdleTimeoutMs:15000});
   } catch (error) {
     if (controller.signal.aborted) {
-      throw new Error(signal?.aborted ? "Operação cancelada." : reason || "A conexão foi interrompida.");
+      throw signal?.aborted ? abortError(signal) : new Error(reason || "A conexão foi interrompida.");
     }
     if (error instanceof TypeError) {
       throw new GenerationError("Não foi possível conectar à API. A extensão tentará novamente.", "network_error", true,
@@ -372,9 +547,10 @@ export async function generateTexts({apiKey, title, description, model, slots, s
 
   let stage = "Gerando textos em português…";
 
-  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
-    if (signal?.aborted) throw new Error("Operação cancelada.");
-    onStage(stage);
+  const attemptLimit = signal?.generationMaxAttempts || MAX_ATTEMPTS;
+  for (let attempt = 0; attempt < attemptLimit; attempt++) {
+    if (signal?.aborted) throw abortError(signal);
+    onStage(`Tentativa ${attempt + 1}/${attemptLimit}: ${stage}`);
 
     let raw;
     try {
@@ -385,37 +561,37 @@ export async function generateTexts({apiKey, title, description, model, slots, s
         attempt: attempt + 1
       });
     } catch (error) {
-      if (signal?.aborted) throw new Error("Operação cancelada.");
+      if (signal?.aborted) throw abortError(signal);
 
       const isRateLimit = error.diagnostic?.httpStatus === 429 || error.code === "rate_limit_exceeded";
-      if (isRateLimit && !rateLimitRetry && attempt < MAX_ATTEMPTS - 1) {
+      if (isRateLimit && !signal?.skipRateLimitRetry && !rateLimitRetry && attempt < attemptLimit - 1) {
         rateLimitRetry = true;
         const wait = parseRetryDelay(error.diagnostic?.message);
         maxOutputTokens = Math.max(800, Math.floor(maxOutputTokens * 0.7));
         stage = `Limite temporário da API. Aguardando ${Math.ceil(wait / 1000)}s; próxima tentativa menor…`;
-        onStage(stage);
-        await new Promise(r => setTimeout(r, wait));
+        onStage(`Tentativa ${attempt + 1}/${attemptLimit}: ${stage}`);
+        await waitForRetry(wait, signal);
         continue;
       }
 
-      if (error.code === "json_validate_failed" && !jsonRetry && attempt < MAX_ATTEMPTS - 1) {
+      if (error.code === "json_validate_failed" && error.diagnostic?.strictJsonApplied !== false && !jsonRetry && attempt < attemptLimit - 1) {
         jsonRetry = true;
         strictJson = false;
-        stage = "O modelo não gerou um JSON válido. Tentando novamente sem o validador estrito…";
+        stage = "O modelo não gerou um JSON válido. Tentando uma recuperação de formato…";
         continue;
       }
 
-      if (error.code === "max_output_tokens" && !tokenRetry && attempt < MAX_ATTEMPTS - 1) {
+      if (error.code === "max_output_tokens" && !tokenRetry && attempt < attemptLimit - 1) {
         tokenRetry = true;
         maxOutputTokens = RECOVERY_OUTPUT_TOKENS;
         stage = "A resposta atingiu o limite. Tentando novamente com mais espaço…";
         continue;
       }
 
-      if (error.retryable && !serverRetry && attempt < MAX_ATTEMPTS - 1) {
+      if (error.retryable && !serverRetry && attempt < attemptLimit - 1) {
         serverRetry = true;
         stage = "Falha temporária de conexão. Aguardando para tentar novamente…";
-        onStage(stage); await new Promise(resolve => setTimeout(resolve, 2000));
+        onStage(`Tentativa ${attempt + 1}/${attemptLimit}: ${stage}`); await waitForRetry(2000, signal);
         continue;
       }
 
@@ -423,12 +599,13 @@ export async function generateTexts({apiKey, title, description, model, slots, s
     }
 
     if(preserved) raw={texts:{...preserved,...(raw?.texts||{})},notes:[...(raw?.notes||[])]};
+    onStage(`Tentativa ${attempt + 1}/${attemptLimit}: validando textos e limites…`);
     const validated = normalizeAndValidate(raw, slots, {title, description});
     if (!validated.issues.length) {
       return {texts: validated.texts, notes: validated.notes};
     }
 
-    if (attempt === MAX_ATTEMPTS - 1) {
+    if (attempt === attemptLimit - 1) {
       throw new Error(`A geração ainda não passou na validação. Nenhum campo foi preenchido. ${validated.issues.slice(0, 3).join(" ")}`);
     }
 
@@ -462,38 +639,40 @@ export async function generateStructured({apiKey, title, description, model, ins
   let maxOutputTokens = Math.max(700, Math.min(Number(initialOutputTokens) || INITIAL_OUTPUT_TOKENS, RECOVERY_OUTPUT_TOKENS));
   let rateLimitRetry = false, jsonRetry = false, tokenRetry = false, serverRetry = false;
   let stage = initialStage;
-  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
-    if (signal?.aborted) throw new Error("Operação cancelada.");
-    onStage(stage);
+  const attemptLimit = signal?.generationMaxAttempts || MAX_ATTEMPTS;
+  for (let attempt = 0; attempt < attemptLimit; attempt++) {
+    if (signal?.aborted) throw abortError(signal);
+    onStage(`Tentativa ${attempt + 1}/${attemptLimit}: ${stage}`);
     let raw;
     try {
       raw = await request({apiKey, model, input, instructions, signal, fetcher, maxOutputTokens,
         strictJson, onRateLimit, secrets: [title, description, source], attempt: attempt + 1});
     } catch (error) {
-      if (signal?.aborted) throw new Error("Operação cancelada.");
+      if (signal?.aborted) throw abortError(signal);
       const rateLimited = error.diagnostic?.httpStatus === 429 || error.code === "rate_limit_exceeded";
-      if (rateLimited && !rateLimitRetry && attempt < MAX_ATTEMPTS - 1) {
+      if (rateLimited && !signal?.skipRateLimitRetry && !rateLimitRetry && attempt < attemptLimit - 1) {
         rateLimitRetry = true;
         const wait = parseRetryDelay(error.diagnostic?.message);
         maxOutputTokens = Math.max(800, Math.floor(maxOutputTokens * 0.7));
-        stage = `Limite temporário da API. Aguardando ${Math.ceil(wait / 1000)}s…`; onStage(stage);
-        await new Promise(resolve => setTimeout(resolve, wait)); continue;
+        stage = `Limite temporário da API. Aguardando ${Math.ceil(wait / 1000)}s…`; onStage(`Tentativa ${attempt + 1}/${attemptLimit}: ${stage}`);
+        await waitForRetry(wait, signal); continue;
       }
-      if (error.code === "json_validate_failed" && !jsonRetry && attempt < MAX_ATTEMPTS - 1) {
+      if (error.code === "json_validate_failed" && error.diagnostic?.strictJsonApplied !== false && !jsonRetry && attempt < attemptLimit - 1) {
         jsonRetry = true; strictJson = false; stage = "Corrigindo o formato do planejamento…"; continue;
       }
-      if (error.code === "max_output_tokens" && !tokenRetry && attempt < MAX_ATTEMPTS - 1) {
+      if (error.code === "max_output_tokens" && !tokenRetry && attempt < attemptLimit - 1) {
         tokenRetry = true; maxOutputTokens = RECOVERY_OUTPUT_TOKENS; stage = "Continuando com mais espaço para o planejamento…"; continue;
       }
-      if (error.retryable && !serverRetry && attempt < MAX_ATTEMPTS - 1) {
+      if (error.retryable && !serverRetry && attempt < attemptLimit - 1) {
         serverRetry = true; stage = "Falha temporária. Aguardando para tentar o planejamento novamente…";
-        onStage(stage); await new Promise(resolve => setTimeout(resolve, 2000)); continue;
+        onStage(`Tentativa ${attempt + 1}/${attemptLimit}: ${stage}`); await waitForRetry(2000, signal); continue;
       }
       throw error;
     }
+    onStage(`Tentativa ${attempt + 1}/${attemptLimit}: validando resposta estruturada…`);
     const checked = validate(raw);
     if (!checked.issues?.length) return checked.value;
-    if (attempt === MAX_ATTEMPTS - 1) throw new Error(`O planejamento não passou na validação. ${checked.issues.slice(0, 3).join(" ")}`);
+    if (attempt === attemptLimit - 1) throw new Error(`O planejamento não passou na validação. ${checked.issues.slice(0, 3).join(" ")}`);
     stage = "Revisando o planejamento e removendo informações não comprovadas…";
     input = [{role: "user", content: source}, {role: "user", content:
       `Refaça o JSON completo e corrija estes problemas:\n${checked.issues.join("\n")}\nUse somente fatos presentes nos dados do produto.`}];

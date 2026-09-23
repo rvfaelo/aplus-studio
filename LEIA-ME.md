@@ -1,47 +1,165 @@
-# A+ Studio 1.5.15 — interface unificada
+# A+ Studio 1.5.24 — verificação automática de todos os modelos
 
-Esta atualização aplica um único layout ao painel, popup, configurações de API e histórico de versões. As cinco etapas do A+, a análise de avaliações, a otimização do anúncio, o planejamento e a auditoria do catálogo continuam disponíveis.
+## Novidade da 1.5.24
+
+- **Verificar todos** aparece no topo de **Chaves de API** e testa, com um único clique, todos os modelos dos provedores que já possuem uma chave salva.
+- O painel mostra progresso global e um resumo por provedor. Clicar em um provedor abre os resultados detalhados de Textos A+ e Briefings das imagens.
+- Provedores diferentes são verificados em paralelo; os modelos de cada provedor são testados em sequência para reduzir erros de limite. Provedores sem chave são ignorados.
+- Após a verificação, o automático passa a usar somente modelos aprovados para a tarefa correspondente nas últimas 24 horas. Chaves, prompts e respostas não são incluídos no histórico.
+
+### Atualizar preservando os dados
+
+1. Extraia o ZIP e copie os arquivos da pasta `aplus-studio-v1.5.24` para a mesma pasta já carregada no Chrome.
+2. Em `chrome://extensions`, clique em **Recarregar**. Não remova a extensão e não limpe seus dados.
+3. Feche painéis antigos, abra novamente o Studio e confirme `1.5.24 conectado`.
+4. Recarregue também a aba do Seller Central antes de usar as funções da Amazon.
+
+## Correção da 1.5.23
+
+- **Verificar modelos** agora valida separadamente JSON de Textos A+ e de briefings. O automático usa somente aprovações das últimas 24 horas para a tarefa correspondente.
+- O automático tenta no máximo dois modelos dentro de 70 segundos. Modelos sem resposta, com fluxo parado ou em quarentena deixam de consumir toda a geração.
+- Dois timeouts ou formatos inválidos consecutivos suspendem o modelo por 24 horas. Uma falha isolada continua sendo tratada como temporária.
+- Se um planejamento completo ultrapassar o limite de saída ou falhar na validação por tamanho, a extensão tenta dois blocos menores de quatro briefings e só salva o conjunto completo.
+- O prompt não permite texto no Banner principal, nas Quatro imagens nem no Banner final. Nas Duas imagens, texto é opcional e só deve aparecer quando necessário para instrução, medida, compatibilidade, instalação ou escolha correta.
+
+## Correção da 1.5.22
+
+- O automático geral tenta **provedores diferentes**, em vez de deixar três modelos lentos do mesmo provedor consumirem todo o prazo.
+- Um modelo validado em Textos A+ também melhora a prioridade dele em Briefings, e vice-versa. O histórico continua separado por tarefa para o relatório, mas a confiabilidade geral passa a ajudar na escolha.
+- Modelos gratuitos explicitamente muito pequenos (até 8B) não são usados automaticamente em tarefas extensas de JSON, evitando respostas incompletas do tipo LFM 2.6B.
+- Modelo sem histórico recebe até 32 segundos no automático geral. Modelos já validados ganham prazo proporcional à média real, até 60 segundos. Depois de timeout, a próxima tentativa fica limitada a 22 segundos.
+- Um timeout coloca o modelo em pausa por 30 minutos; dois consecutivos, por 6 horas. Formato inválido repetido também recebe pausa longa. Isso é temporário e não remove o modelo.
+- O automático geral pode tentar até quatro modelos dentro do limite total de dois minutos. Erro 403 passa a significar **modelo sem acesso nesta chave**, sem acusar incorretamente que a chave inteira foi recusada.
+- O histórico mostra quando um modelo está em pausa e até que horário.
+
+Com o histórico apresentado pelo usuário, `qwen/qwen3.8-27b` do Groq — validado em cerca de 3 segundos — passa à frente dos modelos que acumulam timeout. As falhas antigas continuam úteis; não é necessário limpar o histórico.
+
+## Versão 1.5.21 — teste de modelos e DeepSeek
+
+## Novidades da 1.5.21
+
+- **Teste real por modelo:** em **Chaves de API**, escolha o provedor, salve/teste a chave e use **Testar modelos desta chave**. A extensão faz uma geração mínima em cada opção e mostra: funcionando, sem acesso, falha temporária, instável ou erro de chave.
+- **Remoção segura:** **Ocultar incompatíveis** remove da lista e do modo automático apenas modelos confirmados como inexistentes ou sem acesso. Limite de uso (429), timeout e falha do servidor não removem modelos automaticamente. **Mostrar todos** desfaz o filtro.
+- **Somente aprovados:** a opção **Usar somente modelos aprovados nos testes** restringe o automático aos modelos que responderam corretamente. O resultado é local, por chave/provedor, e representa aquele momento; mudanças de catálogo e limites podem exigir novo teste.
+- **DeepSeek oficial:** novo provedor independente, com `deepseek-v4-flash` e `deepseek-v4-pro`, usando a API oficial. A chave da API é separada de ChatGPT Plus e de assinaturas de sites.
+- **Espera do painel:** comandos longos de Pesquisa e kits e do teste de modelos agora aguardam até 210 segundos no painel, evitando o falso aviso de ausência de resposta enquanto o worker ainda está executando.
+
+O teste envia apenas uma instrução curta e limita a resposta a oito tokens, mas pode consumir cota ou gerar custo mínimo conforme o provedor. Nenhuma chave ou resposta é gravada no relatório; ficam apenas status, duração, data e uma causa resumida.
+
+### Atualizar preservando os dados
+
+1. Extraia o ZIP e copie os arquivos da pasta `aplus-studio-v1.5.22` para a mesma pasta já carregada no Chrome.
+2. Em `chrome://extensions`, clique em **Recarregar**. Não remova a extensão e não limpe seus dados.
+3. Feche painéis antigos, abra novamente o Studio e confirme `1.5.22 conectado`.
+4. Recarregue também a aba do Seller Central antes de usar as funções da Amazon.
+
+## Versão 1.5.20
+
+## Novidades da 1.5.20
+
+Nova área **Pesquisa e kits**, separada do A+ e de Avaliações e anúncio. Usa as chaves e o gerador adaptativo já existentes, com progresso, cancelamento, prazo total e histórico próprio para cada tarefa. Não muda os textos, a aprovação ou os módulos do A+.
+
+- **Pesquisa de produtos:** examina demanda, concorrência, viabilidade, diferenciação e riscos com base nos dados fornecidos; indica o que falta validar antes de investir.
+- **Concorrentes:** compara a amostra, preço por unidade quando a quantidade for confirmada, características, avaliações e oportunidades de melhoria.
+- **Kits:** propõe composições com os SKUs informados, considerando estoque, finalidade, cores MIX e orientação de anúncio e imagens. A extensão calcula os kits montáveis e o cenário de custos; rejeita composições com SKU inexistente, quantidade inválida ou estoque conhecido insuficiente.
+- **Persistência:** rascunho compartilhado pelas três ferramentas, um relatório independente de cada ferramenta por produto, cópia e exportação TXT. Ao editar os dados, um aviso identifica o relatório antigo, que mantém sua amostra original. Falhas ou cancelamento preservam o relatório anterior.
+
+### Como usar
+
+1. Selecione um produto no Studio (ou crie um projeto) e abra **Pesquisa e kits**.
+2. Informe termo e objetivo. **Buscar na Amazon** abre a busca; volte ao Studio, atualize a lista de abas, selecione a página e use **Capturar anúncios**. A captura aceita buscas e páginas de produto da Amazon Brasil, até 20 anúncios na amostra. Repetir a captura atualiza os ASINs existentes sem duplicar nem apagar quantidades revisadas.
+3. Confira preços, quantidades e características; adicione concorrentes manualmente ou dados de mercado no campo de evidências, com fonte/data. A quantidade não é presumida pelo título.
+4. Para kits, adicione SKU, nome, estoque e custo unitário. Preço a testar, taxas percentuais e outros custos são opcionais. Um campo vazio é desconhecido; zero significa ausência confirmada de custo. O mesmo preço de cenário é aplicado a cada composição proposta.
+5. Escolha a ferramenta e gere o relatório. Copie ou exporte o resultado quando estiver revisado.
+
+**Alcance:** a IA analisa dados informados/capturados; não navega na internet nem acessa vendas, BSR, histórico de preços ou volume de buscas ao vivo. A captura não pagina automaticamente e pode exigir revisão quando a Amazon mudar a página. Preço, promoção, frete e variação precisam ser conferidos. A amostra não representa o mercado inteiro.
+
+Os cálculos usam somente os custos preenchidos, não são lucro líquido nem garantia de rentabilidade. Cada composição é um cenário independente: propostas alternativas disputam o mesmo estoque. A disponibilidade de kits virtuais e a possibilidade de usar anúncio/variação existente exigem verificação na conta e no marketplace; nada é publicado automaticamente.
+
+### Origem das metodologias
+
+Adaptação para ferramentas nativas da extensão das skills públicas da Nexscope:
+
+- [amazon-product-research](https://github.com/nexscope-ai/Amazon-Skills/blob/main/amazon-product-research/SKILL.md)
+- [amazon-competitor-analysis](https://github.com/nexscope-ai/Amazon-Skills/blob/main/amazon-competitor-analysis/SKILL.md)
+- [amazon-product-bundling](https://github.com/nexscope-ai/Amazon-Skills/blob/main/amazon-product-bundling/SKILL.md)
+
+Os frameworks foram adaptados ao fluxo local, em português, sem serviço Nexscope obrigatório. A extensão não executa arquivos SKILL.md nem instala um agente externo. As sugestões são hipóteses quando não há evidência. Não houve aumento de permissões nem dependências de produção.
+
+## Novidades da 1.5.19
+
+- O modo automático troca de modelo mais rápido quando um modelo gratuito devolve formato JSON inválido.
+- Respostas com pequenos erros seguros de JSON, como vírgula final, agora são recuperadas antes de declarar falha.
+- O histórico local ficou mais claro: mostra quando o modelo ainda não teve resposta validada e separa demora de formato inválido.
+- Falhas por demora/formato deixam o modelo em espera por alguns minutos para não prender a geração na mesma opção instável.
+
+
+- **Padrão para novos projetos:** xKiro — Melhor modelo gratuito disponível. As escolhas já salvas são preservadas, exceto as quatro opções removidas, que são migradas dentro do mesmo provedor sem alterar textos ou aprovação.
+- **Automático geral:** considera adequação à tarefa, sucesso de respostas validadas, falhas recentes e tempo médio. Usa apenas provedores com chave cadastrada. O automático geral ainda pode usar a OpenAI paga se a chave estiver configurada, como antes; a garantia de modelos gratuitos aplica-se às opções xKiro gratuito e OpenRouter gratuito.
+- **OpenRouter:** testa a chave em `/api/v1/key`, consulta `/api/v1/models` e escolhe entre variantes `:free` publicadas com preço zero de entrada e saída. O envio também limita o preço do provedor a zero. Não inventa sufixos `:free` e não troca para uma versão paga. O catálogo tem cache de cinco minutos.
+- **Escolha por tarefa:** redação A+, briefings comerciais, briefings anti-devolução, análise de avaliações e otimização de anúncio. Ao regenerar um campo, FAQ/especificações recebem prioridade analítica e headline/corpo recebem prioridade comercial. A geração completa dos textos continua em conjunto para preservar coerência e evitar uma requisição por campo.
+- **Prazos:** até 120 segundos por geração e 180 segundos para a operação combinada textos + briefings. Na fila, cada produto tem seu próprio prazo. O tempo inclui catálogo, correções e trocas de modelo. Nos modos automáticos, cada modelo tem até 50 segundos, com até três modelos tentados dentro do prazo total e até duas chamadas de geração/correção por modelo. O prazo é um teto de espera, não uma promessa de concluir nesse tempo.
+- **Progresso:** mostra tarefa, modelo efetivo, tentativa, etapa, motivo da troca, tempo decorrido e limite total, inclusive enquanto o editor está bloqueado. O botão Cancelar geração continua acessível. O popup também exibe esse monitor.
+- **Histórico local:** guarda até 120 registros de modelo/tarefa, contagens de sucesso e falha, média móvel do tempo de respostas válidas e motivo resumido. Mostra os 20 registros recentes. Falhas recebem uma pausa de preferência de dois minutos; dados com mais de sete dias deixam de influenciar a pontuação. Não armazena chaves, prompts, avaliações ou textos dos produtos no histórico.
+- **Opções removidas:** Gemini 3.5 Flash-Lite → Flash; Qwen 3.6 27B → Qwen 3.8 27B; Llama 3.1 8B e Llama 3.3 70B → GPT-OSS 120B, no Groq.
+
+O ranking inicial usa uma estimativa de adequação a partir do catálogo, não uma avaliação comprovada de persuasão. O histórico mede confiabilidade e velocidade no seu uso, não qualidade comercial subjetiva. A disponibilidade gratuita pode mudar e os limites do provedor continuam valendo.
+
+### Ativar o OpenRouter
+
+1. Abra Chaves de API e selecione OpenRouter · modelos gratuitos.
+2. Cole sua chave, use Testar chave e depois Salvar.
+3. No produto, selecione Melhor gratuito para esta tarefa (OpenRouter), ou o Automático geral para permitir alternativas entre suas chaves configuradas.
+
+Esta versão adiciona acesso somente ao domínio `openrouter.ai` às permissões existentes. Não usa sua assinatura ChatGPT como crédito de API. Testar chave valida autenticação e catálogo, mas não garante que uma geração gratuita esteja disponível naquele momento.
+
+Referências técnicas: https://openrouter.ai/docs/guides/routing/model-variants/free ; https://openrouter.ai/docs/api/reference/limits ; https://openrouter.ai/docs/api/api-reference/models/get-models .
+
+### Verificação desta versão
+
+127 testes de regressão passaram; 16 grupos de testes da interface passaram sem erros JavaScript não tratados. Testados prazo total, cancelamento, resultado tardio, troca de modelo, rejeição de chave, bloqueio de modelo pago, migração, preservação de textos e aprovação, checkbox, cópia e ações separadas da Amazon. Falha ao salvar uma métrica auxiliar não invalida o conteúdo gerado. APIs e transporte Chrome foram simulados. Nenhuma chave real ou conta Seller Central foi usada; os testes não garantem disponibilidade externa.
 
 ## Atualizar preservando os dados
 
 1. Extraia o ZIP em uma pasta temporária.
-2. Copie o conteúdo de `aplus-studio-v1.5.15` para **a mesma pasta que o Chrome já usa para esta extensão**, substituindo os arquivos. Guarde uma cópia dos arquivos anteriores se quiser poder voltar ao visual anterior.
+2. Copie o conteúdo de `aplus-studio-v1.5.20` para **a mesma pasta que o Chrome já usa para esta extensão**, substituindo os arquivos. Guarde uma cópia dos arquivos anteriores para poder voltar à versão anterior.
 3. Em `chrome://extensions`, use **Recarregar** no A+ Studio já instalado. **Não remova a extensão e não limpe seu armazenamento**, pois os projetos e as chaves são locais.
-4. Feche as abas antigas do Studio e abra o painel pelo ícone da extensão. O cabeçalho deve mostrar `1.5.15 conectado`.
-5. Recarregue a aba do Seller Central antes de executar diagnóstico ou preenchimento para atualizar o conector.
+4. Feche as abas antigas do Studio e abra o painel pelo ícone da extensão. O cabeçalho deve mostrar `1.5.20 conectado`.
+5. Recarregue a aba do Seller Central antes de usar diagnóstico, montagem ou preenchimento.
 
-## O que mudou
+## Alterações preservadas da 1.5.17
 
-- Navegação lateral para A+ Content e Avaliações e anúncio, com produtos pesquisáveis.
-- Uma mesma identidade visual nas cinco etapas, análise de avaliações, otimização, popup, auditoria, configurações e novidades.
-- Destaque para “Criar planejamento + textos A+”, preservando “Gerar somente textos A+”.
-- Focos comercial e anti-devolução apresentados em cartões de escolha.
-- Campos mais legíveis, alvos principais de 44 px, indicadores de foco, estados de seleção, abas com navegação por setas e nomes acessíveis para controles gerados.
-- Layout adaptável a telas menores e respeito à preferência por movimento reduzido.
-- Briefings em cartões e sequência dos seis módulos visível na etapa Amazon.
+- **Produtos:** a seleção das checkboxes permanece após atualização automática, busca e troca de produto. O contador inclui produtos selecionados que ficaram ocultos pela busca; a fila usa todos eles. A seleção é da sessão do painel.
+- **Prompts:** permitem texto minimalista em português, especialmente nas medidas confirmadas, sem inventar números ou unidades. As quatro imagens priorizam close-ups de quatro detalhes reais distintos, com enquadramento mais amplo quando necessário para explicar uso, escala ou conteúdo.
+- **Textos A+:** ícone de cópia pequeno dentro do início de cada caixa, com espaço reservado para não cobrir o texto e indicação acessível.
+- **Imagens:** Gerar briefing completo (ou Atualizar briefing completo) gera os oito briefings com o foco escolhido. Não gera arquivos de imagem. Usa a API configurada e preserva os textos A+, a aprovação, as notas e o relatório de preenchimento. Em caso de erro, mantém o plano anterior. O briefing completo pode ser aberto e copiado na mesma aba.
+- **Preencher:** Adicionar módulos monta a estrutura; Preencher textos na Amazon aplica os textos salvos e exige aprovação. São ações independentes. Se os módulos já existem, use diretamente o preenchimento. A geração de novos textos continua na aba Produto.
+- **Solução de problemas:** diagnóstico e registro de montagem ficam em uma seção separada, recolhida inicialmente. O relatório de preenchimento continua visível na área principal.
 
-## Funções preservadas
+A nova política de texto minimalista e close-up também é aplicada ao exibir/copiar prompts antigos, sem regravar o planejamento salvo. Para gerar cenas inteiramente novas, use Atualizar briefing completo.
 
-Os scripts existentes de geração, projetos, aprovação, preenchimento, diagnóstico, conectores da Amazon e APIs mantêm o código da versão 1.5.14, com somente a atualização do número da versão. A apresentação fica em `studio-ui.css`, nos HTMLs e no novo `studio-ui.js`; este último não acessa armazenamento, serviços de IA ou campos da Amazon. Nenhuma permissão ou dependência de produção foi adicionada.
+## Registro da entrega anterior — 1.5.17
 
-Catálogo e mapeamento continuam sendo acessados pelo ícone da extensão **com a aba da Amazon ativa**. O popup usa a aba ativa como destino; abrir uma cópia dele numa aba comum não é o fluxo recomendado para capturar ou preencher.
+A base desta entrega é a 1.5.16, incluindo xKiro e o roteamento automático existente. Não foi adicionada permissão, dependência de produção ou migração de dados. Os conectores e a ponte de escrita da Amazon mantêm sua implementação; a separação dos botões ocorre no painel. Catálogo e mapeamento continuam acessíveis pelo ícone da extensão com a aba da Amazon ativa.
 
-## Validação desta entrega
+## Validação
 
-- 106 testes automatizados existentes passaram.
-- Conferência dos IDs, valores das opções, rotas, permissões e CSP preservados.
-- Testes de interface no Chromium: inicialização, mudança de foco comercial/anti-devolução, edição e salvamento, cópia, navegação por teclado, separação do anúncio, diálogo da chave, diagnóstico e relatório copiável, popup, auditoria e ausência de transbordamento horizontal nas sete telas de trabalho a 390 px.
-- As capturas da prévia usam dados fictícios. Os testes de interface usam o código real da interface e simulam o transporte da API do Chrome. A instalação da extensão completa, APIs pagas e o Seller Central real **não foram exercitados nesta etapa**.
+- **111 testes de regressão aprovados.**
+- Teste de interface no Chromium com o HTML/JS/CSS reais e transporte Chrome simulado: 15 grupos de verificações, sem erros JavaScript não tratados.
+- O problema da checkbox foi reproduzido na base 1.5.16; a mesma verificação passa na 1.5.17.
+- Verificados: cópia dentro da caixa, preservação da seleção, filtro e fila, geração independente de briefings, preservação do plano após erro, liberação para nova tentativa, aprovação, separação dos comandos e relatório imediato.
+- Layout conferido visualmente; sete telas de trabalho verificadas a 390 px sem rolagem horizontal.
+- Seller Central real, instalação completa da extensão e APIs externas não foram exercitados. Esses testes não garantem o comportamento de uma página da Amazon modificada posteriormente.
 
-## Reproduzir os testes
+## Reproduzir
 
-`npm test` executa os 106 testes existentes. Para testar a interface, instale as dependências de desenvolvimento e o Chromium do Playwright, depois use `npm run test:ui`. Se necessário, `APLUS_BROWSER_EXECUTABLE` aceita um executável Chromium existente e `APLUS_UI_OUTPUT` define a pasta de capturas. Os exemplos ficam apenas nos testes e não são importados para seus projetos.
+`npm test` executa os testes de regressão. Para a interface, instale as dependências de desenvolvimento e o Chromium do Playwright, depois execute `npm run test:ui`. `APLUS_BROWSER_EXECUTABLE` aceita um executável Chromium; `APLUS_UI_OUTPUT` define a pasta de capturas. Os dados fictícios pertencem aos testes e não são importados para seus projetos.
 
 ---
 
 # A+ Studio
 
-Versão 1.5.16. Extensão Chrome Manifest V3 para organizar, planejar, gerar, revisar, aprovar, montar, preencher e auditar conteúdo Amazon A+, além de analisar avaliações e otimizar anúncios em uma área independente. Usa roteamento entre OpenAI, xKiro, KiraAI, Gemini e Groq.
+Versão 1.5.17. Extensão Chrome Manifest V3 para organizar, planejar, gerar, revisar, aprovar, montar, preencher e auditar conteúdo Amazon A+, além de analisar avaliações e otimizar anúncios em uma área independente. Usa roteamento entre OpenAI, xKiro, KiraAI, Gemini e Groq.
 
 ### Foco do planejamento 1.5.14
 

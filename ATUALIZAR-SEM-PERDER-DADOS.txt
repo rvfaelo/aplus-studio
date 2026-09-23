@@ -1,4 +1,4 @@
-A+ Studio 1.5.15
+A+ Studio 1.5.24
 
 1. Extraia o ZIP.
 2. Substitua os arquivos na MESMA pasta da extensão já instalada.
@@ -8,4 +8,16 @@ A+ Studio 1.5.15
 
 Não remova a extensão nem limpe o armazenamento: os projetos e chaves ficam salvos localmente na instalação existente.
 
-O novo layout preserva os fluxos existentes. Testes locais passaram; a conta real da Amazon não foi usada na verificação.
+154 testes locais de regressão passaram. A conta real da Amazon e APIs externas não foram usadas na verificação.
+
+Nova área: Pesquisa e kits, com pesquisa de produtos, análise de concorrentes e planejamento de kits. Selecione um produto, informe os dados ou capture anúncios da aba escolhida e gere um relatório. Os resultados ficam separados do A+.
+
+Novos projetos usam xKiro gratuito. Para usar OpenRouter, selecione-o em Chaves de API, teste e salve sua chave; depois selecione OpenRouter no produto. O Chrome poderá indicar o novo acesso ao domínio openrouter.ai.
+
+Progresso e histórico aparecem acima do editor. O automático tenta no máximo dois modelos dentro de 70 segundos; o fluxo combinado de textos + briefings tem até 140 segundos. A disponibilidade e os limites dos modelos gratuitos dependem dos provedores.
+
+Em Chaves de API, use Verificar todos no topo. Um clique testa automaticamente todos os modelos dos provedores com chave salva, mostra o progresso e resume o resultado por provedor. A extensão valida separadamente Textos A+ e briefings e, nas 24 horas seguintes, o automático usa somente os aprovados para cada tarefa.
+
+Nos prompts de imagem, Banner principal, Quatro imagens e Banner final ficam sem texto. Texto visual é opcional somente nas Duas imagens, quando necessário para uso, medidas, compatibilidade, instalação ou escolha correta.
+
+Na aba Preencher: use Adicionar módulos para montar e Preencher textos na Amazon para aplicar os textos salvos. Diagnóstico e registro estão em Solução de problemas.

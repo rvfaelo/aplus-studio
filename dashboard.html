@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>A+ Studio 1.5.15</title>
+  <title>A+ Studio 1.5.24</title>
   <link rel="stylesheet" href="dashboard.css">
   <link rel="stylesheet" href="studio-ui.css">
   <script defer src="studio-ui.js"></script>
@@ -30,6 +30,7 @@
     <nav class="app-switcher" aria-label="Áreas da extensão">
       <button type="button" data-workspace="aplus" class="active">A+ Content</button>
       <button type="button" data-workspace="listing">Avaliações e anúncio</button>
+      <button type="button" data-workspace="market">Pesquisa e kits</button>
     </nav>
       <div class="sidebar-divider"></div>
       <div class="side-head"><strong>Produtos</strong><span id="projectCount">0</span></div>
@@ -38,6 +39,7 @@
         <button id="queueSelected">Gerar selecionados</button>
         <button id="queueCancel" hidden>Cancelar fila</button>
       </div>
+      <p id="queueSelectionCount" class="queue-selection-count" role="status" aria-live="polite">0 selecionado(s)</p>
       <div id="projectList" class="project-list"></div>
       <details class="batch-box">
         <summary>Adicionar vários ASINs</summary>
@@ -50,7 +52,7 @@
         <details class="popup-guide"><summary>Catálogo e mapeamento</summary><p>Na aba da Amazon, clique no ícone A+ Studio do navegador para acessar:</p><ul><li>Produtos sem A+</li><li>Mapear campos</li><li>Capturar catálogo</li></ul><p>Assim, os comandos usam a página correta.</p></details>
         <a href="changelog.html" target="_blank" rel="noopener"><span aria-hidden="true">◷</span> Novidades <span aria-hidden="true">↗</span></a>
       </nav>
-      <div class="sidebar-note">A+ Studio <strong>1.5.15</strong><br>Seu espaço de produção.</div>
+      <div class="sidebar-note">A+ Studio <strong>1.5.24</strong><br>Seu espaço de produção.</div>
     </aside>
 
     <main class="workspace" id="mainContent" tabindex="-1">
@@ -102,7 +104,7 @@
           <section class="card options-card" id="planningOptions">
             <div class="section-heading"><span class="eyebrow">DIREÇÃO CRIATIVA</span><h3>Como vamos apresentar este produto?</h3><p>O foco escolhido orienta os textos e os briefings de imagem.</p></div>
             <div class="grid three">
-              <label>Modelo<select id="model"><option value="auto/economico">Automático — priorizar qualidade</option><option value="divider-openai" disabled>── OpenAI API oficial ──</option><option value="openai-api/gpt-5.6-luna">GPT-5.6 Luna (econômico e estável)</option><option value="openai-api/gpt-5.6-terra">GPT-5.6 Terra (mais qualidade)</option><option value="openai-api/gpt-5.6-sol">GPT-5.6 Sol (qualidade máxima)</option><option value="divider-kira" disabled>── KiraAI ──</option><option value="kira/qwen3.8-flash">Qwen 3.8 Flash (KiraAI)</option><option value="kira/glm-5.3-free">GLM 5.3 Free (KiraAI)</option><option value="divider-xkiro" disabled>── xKiro ──</option><option value="xkiro/auto-quality">Melhor modelo gratuito disponível (xKiro)</option><option value="divider-gemini" disabled>── Google Gemini ──</option><option value="gemini/gemini-3.5-flash">Gemini 3.5 Flash</option><option value="gemini/gemini-3.5-flash-lite">Gemini 3.5 Flash-Lite</option><option value="divider-groq" disabled>── Groq ──</option><option value="openai/gpt-oss-20b">GPT-OSS 20B (Groq)</option><option value="openai/gpt-oss-120b">GPT-OSS 120B (Groq)</option><option value="qwen/qwen3.8-27b">Qwen 3.8 27B (Groq)</option><option value="qwen/qwen3.6-27b">Qwen 3.6 27B (Groq)</option><option value="llama-3.1-8b-instant">Llama 3.1 8B Instant (Groq)</option><option value="llama-3.3-70b-versatile">Llama 3.3 70B Versatile (Groq)</option></select></label>
+              <label>Modelo<select id="model"><option value="auto/economico">Automático — estabilidade e qualidade</option><option value="divider-openai" disabled>── OpenAI API oficial ──</option><option value="openai-api/gpt-5.6-luna">GPT-5.6 Luna (econômico e estável)</option><option value="openai-api/gpt-5.6-terra">GPT-5.6 Terra (mais qualidade)</option><option value="openai-api/gpt-5.6-sol">GPT-5.6 Sol (qualidade máxima)</option><option value="divider-kira" disabled>── KiraAI ──</option><option value="kira/qwen3.8-flash">Qwen 3.8 Flash (KiraAI)</option><option value="kira/glm-5.3-free">GLM 5.3 Free (KiraAI)</option><option value="divider-xkiro" disabled>── xKiro ──</option><option value="xkiro/auto-quality" selected>Melhor modelo gratuito disponível (xKiro)</option><option value="divider-openrouter" disabled>── OpenRouter · gratuitos ──</option><option value="openrouter/auto-free">Melhor gratuito para esta tarefa (OpenRouter)</option><option value="divider-deepseek" disabled>── DeepSeek API oficial ──</option><option value="deepseek/deepseek-v4-flash">DeepSeek V4 Flash (rápido)</option><option value="deepseek/deepseek-v4-pro">DeepSeek V4 Pro (qualidade)</option><option value="divider-gemini" disabled>── Google Gemini ──</option><option value="gemini/gemini-3.5-flash">Gemini 3.5 Flash</option><option value="divider-groq" disabled>── Groq ──</option><option value="openai/gpt-oss-20b">GPT-OSS 20B (Groq)</option><option value="openai/gpt-oss-120b">GPT-OSS 120B (Groq)</option><option value="qwen/qwen3.8-27b">Qwen 3.8 27B (Groq)</option></select></label>
               <label>FAQ<input id="faqCount" type="number" min="1" max="6" value="5"></label>
               <label>Especificações<input id="specCount" type="number" min="1" max="15" value="6"></label>
             </div>
@@ -148,7 +150,9 @@
         <div id="tab-images" class="tab-panel" hidden>
           <div class="page-intro"><div><span class="eyebrow">03 / A+ CONTENT</span><h3>Cada imagem responde a uma dúvida.</h3><p>Briefings para produzir as oito imagens do seu A+.</p></div></div>
           <section class="card">
-            <div class="card-head"><div><h3>Briefings de imagens</h3><p>Oito imagens separadas, nos tamanhos do A+ Premium.</p></div><button id="copyAllPrompts">Copiar prompt completo</button></div>
+            <div class="card-head"><div><h3>Briefings de imagens</h3><p>Oito imagens separadas, nos tamanhos do A+ Premium.</p></div><div class="briefing-actions"><button id="generateImageBriefs" type="button" class="primary">Gerar briefing completo</button><button id="copyAllPrompts">Copiar prompt completo</button></div></div>
+            <p class="muted">Gera os oito briefings com o foco escolhido. Mantém os textos A+ já escritos. Usa a API do modelo selecionado.</p>
+            <details id="fullBriefingDetails" class="complete-briefing" hidden><summary>Ver briefing completo · oito imagens</summary><label for="fullImageBriefing">Briefing pronto para copiar</label><textarea id="fullImageBriefing" rows="14" readonly></textarea></details>
             <div id="imageBriefs"></div>
           </section>
         </div>
@@ -174,7 +178,9 @@
             <div class="amazon-sequence" aria-label="Sequência dos seis módulos"><span><b>01</b> Imagem completa</span><span><b>02</b> Quatro imagens</span><span><b>03</b> Duas imagens</span><span><b>04</b> FAQ</span><span><b>05</b> Imagem completa</span><span><b>06</b> Especificações</span></div>
             <ol><li>Revise todos os textos e informações sinalizadas.</li><li>Valide limites, fatos e especificações.</li><li>Aprove este produto individualmente.</li><li>Abra a edição A+ no Seller Central em outra aba da mesma janela e espere terminar de carregar. Depois volte ao Studio e clique no botão abaixo.</li></ol>
             <div id="approvalState" class="callout"></div>
-            <div class="action-row"><button id="approveProject">Aprovar conteúdo</button><button id="diagnoseAmazon">Diagnosticar conexão</button><button id="recordModules">Registrar montagem (suporte)</button><button id="fillAmazon" class="primary">Preparar módulos / preencher textos</button></div>
+            <div class="action-row publish-actions"><button id="approveProject">Aprovar conteúdo</button><button id="prepareAmazonModules" type="button">Adicionar módulos</button><button id="fillAmazon" class="primary">Preencher textos na Amazon</button></div>
+            <p class="muted">Se os módulos já estão prontos, use diretamente Preencher textos na Amazon. Esse botão aplica os textos salvos; não gera novos textos nem adiciona módulos.</p>
+            <details id="amazonTroubleshooting" class="support-tools"><summary>Solução de problemas</summary><p class="muted">Use quando a conexão falhar ou precisar registrar a montagem para suporte.</p><div class="action-row"><button id="diagnoseAmazon">Diagnosticar conexão</button><button id="recordModules">Registrar montagem (suporte)</button></div>
             <div id="moduleRecorder" class="diagnostic-report" hidden aria-live="polite">
               <div class="diagnostic-head"><div><span class="diagnostic-eyebrow">Mapeamento dos módulos da Amazon</span><h4 id="moduleRecorderSummary">Aguardando início</h4><p id="moduleRecorderDetail"></p></div><div class="action-row"><button id="finishModuleRecording" type="button">Finalizar registro</button><button id="copyModuleRecording" type="button">Copiar relatório de montagem</button></div></div>
               <p class="muted">Use este registro apenas se a Amazon mudar a interface. Sequência observada: Imagem completa, Quatro imagens, Duas imagens, FAQ, Imagem completa e Especificações. Ele guarda ações de módulo e mudanças estruturais; cliques de rolagem, foco e fundo são ignorados.</p>
@@ -183,6 +189,7 @@
               <div class="diagnostic-head"><div><span class="diagnostic-eyebrow">Diagnóstico A+ Premium</span><h4 id="diagnosticSummary">Aguardando execução</h4><p id="diagnosticRecommendation"></p></div><button id="copyAmazonDiagnostic" type="button">Copiar diagnóstico técnico</button></div>
               <div id="diagnosticChecks" class="diagnostic-checks"></div>
             </div>
+            </details>
             <div id="fillResult" class="fill-result" hidden aria-live="polite">
               <div class="diagnostic-head"><div><span class="diagnostic-eyebrow">Última tentativa de preenchimento</span><h4 id="fillResultSummary"></h4><p id="fillResultDetail"></p></div><button id="copyFillResult" type="button">Copiar relatório técnico</button></div>
               <div id="fillResultRows" class="fill-result-rows"></div>
@@ -252,6 +259,55 @@
           </div>
         </div>
       </section>
+      <section id="marketWorkspace" class="listing-workspace" hidden aria-label="Pesquisa e kits">
+        <div class="project-header intelligence-header">
+          <div><span class="pill intelligence-pill">Pesquisa de mercado</span><h2 id="marketProductName"></h2></div>
+          <div class="intelligence-model"><label for="marketModel">Modelo de IA</label><select id="marketModel"></select></div>
+        </div>
+        <nav class="market-tool-nav" aria-label="Ferramentas de pesquisa">
+          <button type="button" data-market-tool="research" class="active" aria-pressed="true">Pesquisa de produtos</button>
+          <button type="button" data-market-tool="competitors" aria-pressed="false">Concorrentes</button>
+          <button type="button" data-market-tool="bundles" aria-pressed="false">Kits</button>
+        </nav>
+        <h3 id="marketToolTitle">Pesquisa de produtos</h3>
+        <div class="market-form-grid">
+          <div><label for="marketQuery">Produto ou termo de pesquisa</label><input id="marketQuery" maxlength="300" placeholder="Ex.: ímãs para geladeira"></div>
+          <div><label for="marketGoal">Objetivo</label><input id="marketGoal" maxlength="2000" placeholder="Ex.: decidir entre kits de 4 ou 6 peças"></div>
+        </div>
+        <div class="market-capture-bar">
+          <button id="marketOpenSearch" type="button">Buscar na Amazon</button>
+          <label for="marketTab">Aba para capturar</label><select id="marketTab"><option value="">Selecione uma aba…</option></select>
+          <button id="marketRefreshTabs" type="button" title="Atualizar abas abertas">Atualizar abas</button>
+          <button id="marketCapture" type="button" disabled>Capturar anúncios</button>
+        </div>
+        <p class="muted">Captura a página escolhida, até 20 anúncios. Confira o preço e a quantidade de cada kit. A análise usa apenas a amostra e os dados informados; não consulta vendas ou tendências ao vivo.</p>
+        <div class="card-head"><h3>Concorrentes da amostra</h3><button id="marketAddCompetitor" type="button">Adicionar concorrente</button></div>
+        <div class="market-table-wrap" role="region" aria-label="Concorrentes editáveis" tabindex="0">
+          <table class="market-table"><thead><tr><th>Produto</th><th>ASIN</th><th>Preço total (R$)</th><th>Quantidade</th><th>Características / observações</th><th>R$ / unidade</th><th>Fonte / data / avaliações</th><th>Remover</th></tr></thead><tbody id="marketCompetitors"></tbody></table>
+        </div>
+        <div class="market-form-grid">
+          <div><label for="marketEvidence">Dados de mercado, avaliações e fontes</label><textarea id="marketEvidence" rows="5" maxlength="18000" placeholder="Cole dados observados, com fonte e data. Ex.: comentários sobre tamanho, comparação de kits, histórico de vendas próprio."></textarea></div>
+          <div><label for="marketConstraints">Restrições e anúncios existentes</label><textarea id="marketConstraints" rows="5" maxlength="5000" placeholder="Ex.: estoque com cores MIX; analisar anúncio novo ou cadastro IMA0002. Informe diferenças de produto, tamanho e composição."></textarea></div>
+        </div>
+        <section id="marketKitInputs" hidden>
+          <div class="card-head"><h3>Itens disponíveis para kits</h3><button id="marketAddInventory" type="button">Adicionar item</button></div>
+          <div class="market-table-wrap" role="region" aria-label="Itens de estoque" tabindex="0">
+            <table class="market-table market-inventory"><thead><tr><th>SKU</th><th>Item / cor / tamanho</th><th>Estoque em unidades</th><th>Custo unitário (R$)</th><th>Remover</th></tr></thead><tbody id="marketInventory"></tbody></table>
+          </div>
+          <div class="market-form-grid market-costs">
+            <div><label for="marketPrice">Preço a testar por kit (R$)</label><input id="marketPrice" type="number" min="0" step="0.01"></div>
+            <div><label for="marketFee">Taxas percentuais totais (%)</label><input id="marketFee" type="number" min="0" max="99.99" step="0.01"></div>
+            <div><label for="marketCosts">Outros custos por kit (R$)</label><input id="marketCosts" type="number" min="0" step="0.01"></div>
+          </div>
+          <p class="muted">Inclua embalagem, frete, tarifas fixas e demais custos aplicáveis. Vazio significa desconhecido; use 0 apenas quando não houver custo. O cálculo não representa lucro líquido.</p>
+        </section>
+        <div class="action-row"><button id="marketSave" type="button">Salvar pesquisa</button><button id="marketGenerate" class="primary" type="button">Pesquisar oportunidade</button></div>
+        <section class="market-output" aria-label="Resultado da pesquisa">
+          <div class="card-head"><h3>Relatório</h3><div class="inline"><button id="marketCopy" type="button" disabled>Copiar</button><button id="marketExport" type="button" disabled>Exportar TXT</button></div></div>
+          <p id="marketStale" class="muted" hidden>Os dados mudaram desde esta análise. O relatório abaixo mantém a amostra original; gere novamente para atualizar.</p>
+          <pre id="marketReport">Nenhum relatório gerado para esta ferramenta.</pre>
+        </section>
+      </section>
     </main>
   </div>
 
@@ -259,12 +315,30 @@
   <dialog id="apiDialog" aria-labelledby="apiDialogTitle">
     <form method="dialog" class="dialog-card">
       <div class="card-head"><div><h3 id="apiDialogTitle">Conexões de inteligência artificial</h3><p id="apiState">Verificando configuração…</p></div><button value="cancel" aria-label="Fechar">×</button></div>
-      <label for="keyProvider">Provedor</label><select id="keyProvider"><option value="openai">OpenAI API oficial</option><option value="gemini">Google Gemini</option><option value="kira">KiraAI.vn</option><option value="groq">Groq</option><option value="xkiro">xKiro</option></select>
-      <div id="savedKeyBox" hidden><label for="savedKeyMask">Chave salva</label><input id="savedKeyMask" readonly aria-label="Chave salva mascarada"><button id="replaceSavedKey" type="button">Substituir chave</button></div>
-      <div id="newKeyBox"><label for="apiKey">Nova chave</label><input id="apiKey" type="password" autocomplete="off" placeholder="Cole sua API Key"></div>
-      <p class="muted">A chave fica salva somente neste navegador e não é enviada aos produtos ou à página da Amazon.</p>
-      <p id="keyTestStatus" class="muted" aria-live="polite">Teste obrigatório antes de salvar. O teste não gera conteúdo.</p>
-      <div class="action-row"><button id="removeKey" type="button" class="danger">Remover chave</button><button id="testKey" type="button">Testar chave</button><button id="saveKey" type="button" class="primary" disabled>Salvar chave testada</button></div>
+      <section class="model-verification-hub" aria-labelledby="modelVerificationTitle">
+        <div class="model-verification-head"><div><span class="eyebrow">VERIFICAÇÃO AUTOMÁTICA</span><h4 id="modelVerificationTitle">Descobrir quais modelos funcionam</h4><p>Um clique testa Textos A+ e briefings em todos os provedores que já possuem chave salva.</p></div><button id="testAllModels" class="primary" type="button">Verificar todos</button></div>
+        <div id="modelVerificationProgress" class="model-verification-progress" role="status" aria-live="polite" hidden>
+          <div><strong id="modelVerificationStage">Preparando verificação…</strong><span id="modelVerificationCount">0/0</span></div>
+          <progress id="modelVerificationBar" value="0" max="1"></progress>
+        </div>
+        <div id="allModelSummary" class="all-model-summary"><p class="muted">Salve ao menos uma chave para verificar os modelos.</p></div>
+        <label class="check-option"><input id="verifiedOnly" type="checkbox"> No automático, usar somente modelos aprovados nas últimas 24 horas</label>
+        <p class="model-verification-note">O teste pode consumir uma pequena cota. Provedores sem chave são ignorados.</p>
+      </section>
+      <section class="key-editor" aria-labelledby="keyEditorTitle">
+        <div class="section-heading"><div><span class="eyebrow">CHAVES</span><h4 id="keyEditorTitle">Configurar um provedor</h4></div></div>
+        <label for="keyProvider">Provedor</label><select id="keyProvider"><option value="openai">OpenAI API oficial</option><option value="gemini">Google Gemini</option><option value="kira">KiraAI.vn</option><option value="groq">Groq</option><option value="xkiro">xKiro</option><option value="openrouter">OpenRouter · modelos gratuitos</option><option value="deepseek">DeepSeek API oficial</option></select>
+        <div id="savedKeyBox" hidden><label for="savedKeyMask">Chave salva</label><input id="savedKeyMask" readonly aria-label="Chave salva mascarada"><button id="replaceSavedKey" type="button">Substituir chave</button></div>
+        <div id="newKeyBox"><label for="apiKey">Nova chave</label><input id="apiKey" type="password" autocomplete="off" placeholder="Cole sua API Key"></div>
+        <p class="muted">A chave fica salva somente neste navegador e não é enviada aos produtos ou à página da Amazon.</p>
+        <p id="keyTestStatus" class="muted" aria-live="polite">Teste obrigatório antes de salvar. O teste não gera conteúdo.</p>
+        <div class="action-row"><button id="removeKey" type="button" class="danger">Remover chave</button><button id="testKey" type="button">Testar chave</button><button id="saveKey" type="button" class="primary" disabled>Salvar chave testada</button></div>
+      </section>
+      <details class="provider-model-details">
+        <summary>Detalhes do provedor selecionado</summary>
+        <div id="modelTestResults" class="model-test-results"><p class="muted">Nenhum teste realizado para este provedor.</p></div>
+        <div class="action-row"><button id="hideFailedModels" type="button">Ocultar incompatíveis</button><button id="showAllModels" type="button">Mostrar todos</button></div>
+      </details>
     </form>
   </dialog>
 </body>

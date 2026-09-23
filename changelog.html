@@ -10,7 +10,32 @@
   <link rel="stylesheet" href="studio-ui.css">
 </head>
 <body class="studio-changelog"><main>
-  <a class="subtle-link" href="dashboard.html">← Voltar ao Studio</a><span class="eyebrow">EVOLUÇÃO DO PRODUTO</span><h1>A+ Studio · Versão 1.5.15</h1><p class="note">Um único visual para todo o Studio: navegação clara, contraste reforçado, formulários legíveis, atalhos para ferramentas e navegação por teclado. Geração, aprovação e preenchimento mantêm seus fluxos.</p>
+  <a class="subtle-link" href="dashboard.html">← Voltar ao Studio</a><span class="eyebrow">EVOLUÇÃO DO PRODUTO</span><h1>A+ Studio · Versão 1.5.24</h1><p class="note">Um clique verifica todos os modelos das chaves salvas, com progresso e resumo por provedor.</p>
+  <h2>Versão 1.5.24</h2><ul><li>“Verificar todos” fica no topo de Chaves de API e executa a verificação completa sem trocar de provedor manualmente.</li><li>Progresso global informa quantos modelos já foram testados; o resumo mostra o estado de cada provedor.</li><li>Clicar no resumo de um provedor abre os resultados detalhados de Textos A+ e Briefings.</li><li>Provedores são processados em paralelo, enquanto seus modelos são testados em sequência para reduzir limites temporários.</li><li>Somente chaves já salvas são usadas; provedores sem chave são ignorados.</li></ul>
+  <h2>Versão 1.5.23</h2><ul><li>Verificar modelos testa JSON de Textos A+ e briefings separadamente; aprovações valem por 24 horas.</li><li>O automático usa no máximo dois modelos em até 70 segundos, abandona conexões paradas e pula modelos em quarentena.</li><li>Dois timeouts ou formatos inválidos consecutivos colocam o modelo em pausa por 24 horas.</li><li>Planejamentos extensos podem ser divididos em dois blocos de quatro briefings quando a validação ou o limite de saída impedir a resposta completa.</li><li>Texto visual fica proibido no Banner principal, nas Quatro imagens e no Banner final; permanece opcional apenas nas Duas imagens.</li></ul>
+  <h2>Versão 1.5.22</h2><ul><li>Alterna provedores para que vários modelos lentos do mesmo serviço não consumam todo o prazo.</li><li>Resultados validados ajudam a escolha em outras tarefas; tempo por modelo passa a ser adaptativo.</li><li>Timeouts e formatos inválidos repetidos entram em pausa de até 6 horas.</li><li>Modelos gratuitos até 8B deixam de assumir automaticamente tarefas grandes de JSON.</li><li>Histórico mostra a pausa e diferencia chave recusada de modelo sem acesso.</li></ul>
+  <h2>Versão 1.5.21</h2><ul><li>Teste mínimo individual mostra quais modelos funcionam com a chave salva.</li><li>Somente modelos confirmadamente indisponíveis podem ser ocultados; timeout e limite temporário permanecem visíveis.</li><li>Opção para restringir o automático aos modelos aprovados.</li><li>DeepSeek V4 Flash e V4 Pro pela API oficial.</li><li>Maior prazo de resposta do painel para testes e relatórios de mercado longos.</li></ul>
+  <h2>Versão 1.5.20</h2><ul><li>Área Pesquisa e kits com três ferramentas adaptadas das skills da Nexscope.</li><li>Captura de até 20 anúncios da aba escolhida, edição de dados e comparação por unidade.</li><li>Composições com SKUs disponíveis, cálculo de estoque e custos informados, orientações de anúncio e imagens.</li><li>Relatórios salvos por produto, exportação TXT, progresso e cancelamento. Dados alterados sinalizam relatório desatualizado.</li></ul>
+  <h2>Versão 1.5.19</h2><ul><li>O automático passa para outro modelo quando xKiro/Qwen devolve formato inválido em vez de gastar a segunda tentativa no mesmo modelo.</li><li>O parser recupera JSON com pequenos problemas seguros, como vírgula final.</li><li>O histórico local agora usa mensagens mais claras para modelos sem resposta validada.</li></ul>
+  <h2>Versão 1.5.18</h2>
+  <ul>
+    <li>xKiro gratuito como padrão para novos projetos; OpenRouter gratuito com teste de chave e seleção por tarefa.</li>
+    <li>Automático considera sucesso, velocidade e falhas recentes, sem abrir mão da validação.</li>
+    <li>Limite total de dois minutos por geração ou três minutos para textos e briefings juntos.</li>
+    <li>Progresso visível com modelo, etapa, tentativa, motivo da troca, tempo e botão de cancelamento.</li>
+    <li>Histórico local sem chaves ou conteúdo dos produtos; opções Flash-Lite, Qwen 3.6 e os dois Llama removidas.</li>
+  </ul>
+  <h2>Versão 1.5.17</h2>
+  <ul>
+    <li>Checkboxes preservam a seleção após atualização da lista, busca e troca de produto.</li>
+    <li>Texto minimalista permitido nas imagens, especialmente nas medidas confirmadas; quatro imagens priorizam close-ups de detalhes reais.</li>
+    <li>Ícone pequeno de cópia dentro de cada caixa de texto, sem sobreposição com o conteúdo.</li>
+    <li>Gerar ou atualizar o briefing completo na aba Imagens preserva os textos A+ e a aprovação. Em caso de falha, mantém o plano anterior.</li>
+    <li>Adicionar módulos e Preencher textos na Amazon são botões independentes; o preenchimento usa os textos salvos.</li>
+    <li>Diagnóstico e registro de montagem agrupados em Solução de problemas.</li>
+  </ul>
+  <h2>Histórico e funções existentes</h2>
+  <p>Versão 1.5.15: interface unificada, navegação por teclado, contraste reforçado e layout adaptável.</p>
   <p>O modo automático agora prioriza qualidade: usa os modelos mais fortes das chaves configuradas e inclui xKiro com seleção dinâmica do melhor modelo gratuito disponível, preservando a validação factual antes de qualquer preenchimento.</p>
   <ul><li>OpenAI API oficial com GPT-5.6 Luna, Terra e Sol.</li><li>Botão “Testar chave” obrigatório antes de salvar uma credencial nova.</li><li>Primeiro e último banners incluem todas as variações confirmadas do produto.</li><li>Cenas humanas variam homem e mulher quando isso fizer sentido para o produto e a estratégia.</li><li>ChatGPT Plus continua separado do faturamento da API.</li></ul>
   <p>Versão 1.5.14: adiciona, por produto, os focos “Comercial persuasivo” e “Clareza anti-devolução”. O segundo transforma textos e os oito briefings de imagem em uma demonstração visual de conteúdo da compra, escala, material, uso correto, medição, compatibilidade e expectativa real. Os riscos podem ser escritos manualmente ou importados do Amazon Review Analyzer.</p>
@@ -31,7 +56,7 @@
   <p>O painel usa conexão exclusiva com o serviço, verifica a versão instalada e mostra desconexões com instruções de recuperação. A causa persistente no Chrome do usuário ainda depende de confirmação local.</p>
   <p>Corrige a comunicação do painel aberto em aba com o worker, incluindo salvar API Key e criar projetos. A autorização continua restrita ao popup e painel desta extensão.</p>
   <p class="note">Um painel completo para produzir vários conteúdos A+ com revisão e aprovação por produto.</p>
-  <h2>Novidades desta versão</h2>
+  <h2>Recursos do Studio</h2>
   <ul>
     <li>Prioridade de escrita: fidelidade, compra correta, prevenção de devoluções, conversão e somente então SEO natural.</li>
     <li>SEO limitado ao nome correto e a 2 a 4 termos comprovados no título ou na descrição.</li>

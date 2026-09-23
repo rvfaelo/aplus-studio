@@ -5,11 +5,53 @@ const clean = (value, max = 1200) => String(value ?? "").normalize("NFC")
   .replace(/[\u0000-\u001f\u007f\u200b-\u200f\u202a-\u202e\u2066-\u2069]/g, " ")
   .replace(/\s+/g, " ").trim().slice(0, max);
 
-export function planningInstructions(strategy = null) {
+const NO_IMAGE_TEXT_RULE = "Não renderize texto, letras, números, medidas, legendas, selos, logos ou marcas d'água nesta imagem. A comunicação deve ser exclusivamente visual, limpa e centrada no produto.";
+const DUAL_IMAGE_TEXT_RULE = "Somente neste módulo de Duas imagens, pode usar texto minimalista em português quando ele for realmente necessário para explicar instrução de uso, medição, compatibilidade, instalação ou escolha correta. Se a imagem explicar sozinha, não use texto. Quando necessário, use uma única legenda curta ou poucos rótulos discretos, sem cobrir o produto. Medidas devem seguir número + unidade confirmada + (eixo confirmado), separadas por x; nunca invente números, unidades ou eixos. Sem preços, promoções, selos, logos ou marcas d'água.";
+const FOUR_CLOSEUP_RULE = "Prefira close-up do produto para mostrar detalhadamente textura, material, acabamento, costura, encaixe ou outro detalhe real. Cada uma das quatro imagens deve mostrar um detalhe diferente. Preserve proporções e contexto suficientes para reconhecer o produto; use enquadramento mais aberto somente se necessário para explicar escala, conteúdo ou uso.";
+const IMAGE_SPECS = [
+  ["Banner principal", "1464 × 600"], ["Quatro imagens · Imagem 1", "300 × 225"],
+  ["Quatro imagens · Imagem 2", "300 × 225"], ["Quatro imagens · Imagem 3", "300 × 225"],
+  ["Quatro imagens · Imagem 4", "300 × 225"], ["Duas imagens · Imagem 1", "650 × 350"],
+  ["Duas imagens · Imagem 2", "650 × 350"], ["Banner final", "1464 × 600"]
+];
+const LEGACY_TEXT_BANS = [
+  /Não inclua texto, letras, números, medidas, setas, logos ou marcas d['’]água[.!]?/gi,
+  /sem texto, logo, marca d['’]água, números ou medidas na imagem[.!]?/gi,
+  /(?:sem|não incluir) textos?, logos? (?:ou|e) marcas? d['’]água[.!]?/gi,
+  /(?:sem|não incluir) textos?, letras, números(?: ou medidas)?(?: na imagem)?[.!]?/gi,
+  /sem adicionar texto à própria imagem[.!]?/gi,
+  /NÃO renderize letras, números ou setas na fotografia gerada[.!]?/gi,
+  /\bsem textos?(?: na imagem| na foto| na fotografia)?(?=[.!;,]|$)[.!]?/gi
+];
+
+export function imagePromptForBrief(brief, index) {
+  let prompt = clean(brief?.prompt, 6000);
+  for (const pattern of LEGACY_TEXT_BANS) prompt = prompt.replace(pattern, "");
+  prompt = prompt.replaceAll(FOUR_CLOSEUP_RULE, "");
+  prompt = prompt.replace(/Pode usar texto minimalista em português na imagem[\s\S]*?Sem logos ou marcas d['’]água\./gi, "")
+    .replace(/Texto visual sugerido, usar somente se sustentado pelos fatos:\s*"[^"]*"\./gi, "")
+    .replace(/Somente neste módulo de Duas imagens[\s\S]*?marcas d['’]água\./gi, "")
+    .replace(/Não renderize texto, letras, números, medidas, legendas, selos, logos ou marcas d['’]água nesta imagem\.[\s\S]*?centrada no produto\./gi, "");
+  prompt = prompt.replace(/,\s*([.!])/g, "$1").replace(/[,;]\s*$/, ".").trim();
+  const dualImage = index === 5 || index === 6;
+  prompt += ` ${dualImage ? DUAL_IMAGE_TEXT_RULE : NO_IMAGE_TEXT_RULE}`;
+  if (index >= 1 && index <= 4 && !prompt.includes(FOUR_CLOSEUP_RULE)) prompt += ` ${FOUR_CLOSEUP_RULE}`;
+  if (dualImage && brief?.overlay_text) {
+    const overlay = `Texto visual sugerido, usar somente se sustentado pelos fatos: "${clean(brief.overlay_text, 300)}".`;
+    if (!prompt.includes(overlay)) prompt += ` ${overlay}`;
+  }
+  return prompt.replace(/\s+/g, " ").trim();
+}
+
+export function planningInstructions(strategy = null, range = null) {
   const antiReturn = strategy?.planningFocus === "returns";
+  const start=Math.max(0,Math.min(7,Number(range?.start)||0));
+  const count=Math.max(1,Math.min(8-start,Number(range?.count)||8));
+  const selectedSpecs=IMAGE_SPECS.slice(start,start+count);
+  const briefList=selectedSpecs.map(([name,size],offset)=>`  ${start+offset+1}. ${name} — ${size}`).join("\n");
   const briefShape = antiReturn
     ? `{"module":"", "size":"", "goal":"", "scene":"", "composition":"", "prompt":"", "question_answered":"", "return_risk_reduced":"", "must_show":"", "must_not_suggest":"", "overlay_text":""}`
-    : `{"module":"", "size":"", "goal":"", "scene":"", "composition":"", "prompt":""}`;
+    : `{"module":"", "size":"", "goal":"", "scene":"", "composition":"", "prompt":"", "overlay_text":""}`;
   const visualRules = antiReturn ? `
 REGRAS ESPECÍFICAS DO MODO ANTI-DEVOLUÇÃO:
 - As oito imagens devem funcionar como uma demonstração visual do produto. Clareza e compra correta vêm antes da beleza e da emoção.
@@ -19,7 +61,7 @@ REGRAS ESPECÍFICAS DO MODO ANTI-DEVOLUÇÃO:
 - Se não houver fato suficiente para uma função, adapte a cena para esclarecer outra dúvida comprovada. Nunca invente uma medida, limitação ou incompatibilidade.
 - Variações no primeiro e último banner devem parecer opções, nunca um kit, salvo quando o conjunto estiver confirmado.
 - Pessoas só entram para demonstrar escala ou uso correto. Nunca use uma pessoa apenas como decoração.
-- overlay_text contém, quando indispensável, uma legenda factual muito curta para ser adicionada DEPOIS por uma camada gráfica. O prompt fotográfico nunca deve pedir à IA para desenhar letras, números ou setas.
+- Use overlay_text somente nas duas imagens do módulo Duas imagens e apenas quando uma legenda factual muito curta ou uma medida confirmada for indispensável para explicar uso, medição, compatibilidade, instalação ou escolha correta. Nas outras seis imagens, overlay_text deve ser sempre vazio.
 - Para produto infantil, não crie cena que sugira uso sem supervisão, sustentação ou segurança não comprovadas.
 ` : "";
   return `Você é um planejador de Amazon A+ Premium em português do Brasil.
@@ -44,28 +86,27 @@ Regras:
 - Refine audience, purchase_moment, main_problem, emotional_desire e main_objection para este produto específico. Marque audience_is_inference como true sempre que o público não estiver literal nos dados.
 - Crie de 2 a 8 relações característica-benefício. evidence deve ser um trecho curto ou paráfrase estritamente sustentada pelos dados recebidos.
 - Se houver menos de 2 características comprovadas, use apenas as disponíveis e explique em notes.
-- Crie exatamente 8 briefings de imagens, nesta ordem e com estes nomes/tamanhos:
-  1. Banner principal — 1464 × 600
-  2. Quatro imagens · Imagem 1 — 300 × 225
-  3. Quatro imagens · Imagem 2 — 300 × 225
-  4. Quatro imagens · Imagem 3 — 300 × 225
-  5. Quatro imagens · Imagem 4 — 300 × 225
-  6. Duas imagens · Imagem 1 — 650 × 350
-  7. Duas imagens · Imagem 2 — 650 × 350
-  8. Banner final — 1464 × 600
+- Crie exatamente ${count} briefings de imagens, nesta ordem e somente com estes nomes/tamanhos:
+${briefList}
 - Cada briefing deve cumprir a função persuasiva do módulo definida na estratégia, além de usar cena, fundo e ângulo visual diferentes, sem colagem, grid ou mosaico.
 - Se o produto tiver mais de uma variação confirmada (como cor, estampa, tamanho, kit ou modelo), o Banner principal e o Banner final devem mostrar TODAS as variações juntas. Não escolha apenas uma e não invente variações ausentes dos dados ou das imagens de referência. Essa regra permite reutilizar o mesmo A+ nos ASINs das variações.
 - Quando uma pessoa ajudar a demonstrar o benefício, escolha homem ou mulher conforme o público, a categoria e o cenário de uso. Em produtos de uso amplo, distribua homens e mulheres entre as cenas humanas para mostrar contextos diferentes; por exemplo, uma almofada de cadeira pode aparecer com uma mulher e com um homem trabalhando em home office. Não force alternância nem inclua uma pessoa quando isso não contribuir para a estratégia do produto.
 - Nos briefings que incluírem pessoas, declare de forma explícita no campo prompt quem aparece e qual uso real está sendo demonstrado. Evite repetir a mesma pessoa em todas as imagens.
 - Os banners devem manter produto e elementos essenciais na área central segura de aproximadamente 600 × 450.
-- Os prompts devem pedir produto idêntico à referência, fotografia comercial realista, sem texto, logo, marca d'água, números ou medidas na imagem.
+- Os prompts devem pedir produto idêntico à referência e fotografia comercial realista.
+- Banner principal, Quatro imagens e Banner final: não renderize nenhum texto. A mensagem deve ser transmitida pela própria fotografia, composição, escala e detalhes do produto.
+- Duas imagens (650 × 350): texto também é opcional. Use apenas se for realmente necessário para explicar instrução de uso, medição, compatibilidade, instalação ou escolha correta; caso contrário, deixe a imagem sem texto. Quando usar, aplique ${DUAL_IMAGE_TEXT_RULE}
+- Para as Quatro imagens (300 × 225): ${FOUR_CLOSEUP_RULE}
+- Preencha overlay_text com a legenda exata somente nos briefings 6 e 7, ou com uma string vazia. Nos briefings 1–5 e 8, overlay_text deve obrigatoriamente ser vazio. As instruções de texto e de close-up também devem aparecer no campo prompt, pois ele pode ser copiado sozinho.
 - Não sugira depoimentos, avaliações, concorrentes, descontos, urgência, garantia ou alegações sem prova.
 - O plano é separado dos textos que serão preenchidos na Amazon.
 ${visualRules}`;
 }
 
-export function normalizePlan(raw, strategy = null) {
+export function normalizePlan(raw, strategy = null, range = null) {
   const issues = [], diagnosis = raw?.diagnosis || {};
+  const start=Math.max(0,Math.min(7,Number(range?.start)||0));
+  const count=Math.max(1,Math.min(8-start,Number(range?.count)||8));
   const requiredDiagnosis = ["category", "audience", "main_problem", "central_benefit", "summary"];
   const optionalDiagnosis = ["purchase_moment", "emotional_desire", "main_objection"];
   for (const key of requiredDiagnosis) if (typeof diagnosis[key] !== "string") issues.push(`diagnosis.${key} ausente.`);
@@ -81,15 +122,18 @@ export function normalizePlan(raw, strategy = null) {
   const featureBenefits = pairs(raw?.feature_benefits, ["feature", "benefit", "evidence"], 8);
   const antiReturn = strategy?.planningFocus === "returns" || raw?.planning_focus === "returns";
   const imageBriefKeys = ["module", "size", "goal", "scene", "composition", "prompt",
-    ...(antiReturn ? ["question_answered", "return_risk_reduced", "must_show", "must_not_suggest", "overlay_text"] : [])];
-  const imageBriefs = pairs(raw?.image_briefs, imageBriefKeys, 8);
+    ...(antiReturn ? ["question_answered", "return_risk_reduced", "must_show", "must_not_suggest"] : [])];
+  const imageBriefs = pairs(raw?.image_briefs, imageBriefKeys, count);
   imageBriefs.forEach((brief, index) => {
-    if (index === 0 || index === 7) brief.prompt = clean(`${brief.prompt} Se existirem duas ou mais variações confirmadas do produto nos dados ou nas imagens de referência, mostre todas elas juntas neste banner, sem omitir nenhuma e sem inventar novas variações.`, 3000);
+    const globalIndex=start+index;
+    brief.overlay_text = globalIndex === 5 || globalIndex === 6 ? clean(raw?.image_briefs?.[index]?.overlay_text, 300) : "";
+    if (globalIndex === 0 || globalIndex === 7) brief.prompt = clean(`${brief.prompt} Se existirem duas ou mais variações confirmadas do produto nos dados ou nas imagens de referência, mostre todas elas juntas neste banner, sem omitir nenhuma e sem inventar novas variações.`, 3000);
+    brief.prompt = imagePromptForBrief(brief, globalIndex);
   });
   if (missingInformation.length < 3) issues.push("Liste pelo menos 3 informações ausentes relevantes.");
   if (!featureBenefits.length) issues.push("Inclua ao menos uma relação entre característica e benefício.");
-  if (imageBriefs.length !== 8) issues.push("São necessários exatamente 8 briefings de imagem.");
-  const expectedSizes = ["1464 × 600", "300 × 225", "300 × 225", "300 × 225", "300 × 225", "650 × 350", "650 × 350", "1464 × 600"];
+  if (imageBriefs.length !== count) issues.push(`São necessários exatamente ${count} briefings de imagem.`);
+  const expectedSizes = IMAGE_SPECS.slice(start,start+count).map(item=>item[1]);
   imageBriefs.forEach((brief, index) => {
     if (brief.size.replace(/x/g, "×").replace(/\s/g, "") !== expectedSizes[index]?.replace(/\s/g, "")) issues.push(`Tamanho incorreto no briefing ${index + 1}.`);
   });
@@ -101,8 +145,20 @@ export function normalizePlan(raw, strategy = null) {
 }
 
 export async function generatePlan(options) {
-  const plan = await generateStructured({...options, instructions: planningInstructions(options.strategy),
-    validate: raw => normalizePlan(raw, options.strategy)});
+  const generateRange=(range,initialOutputTokens)=>generateStructured({...options,
+    instructions: planningInstructions(options.strategy,range),initialOutputTokens,
+    validate: raw => normalizePlan(raw, options.strategy,range)});
+  let plan;
+  try { plan=await generateRange(null,4200); }
+  catch(error){
+    if(options.signal?.aborted)throw error;
+    const canSplit=error?.code==="max_output_tokens"||/planejamento não passou na validação/i.test(String(error?.message||""));
+    if(!canSplit)throw error;
+    options.onStage?.("A resposta ficou grande; dividindo os oito briefings em duas partes menores…");
+    const first=await generateRange({start:0,count:4},3000);
+    const second=await generateRange({start:4,count:4},3000);
+    plan={...first,imageBriefs:[...first.imageBriefs,...second.imageBriefs],notes:[...new Set([...(first.notes||[]),...(second.notes||[])])]};
+  }
   if (options.strategy) {
     plan.salesStrategy = compactSalesStrategy(options.strategy);
     plan.categoryChecklist = options.strategy.checklist || [];
@@ -124,7 +180,9 @@ export function buildFullImagePrompt(plan, title = "") {
     "- Use fotografia comercial realista de alta qualidade e mantenha uma cena, fundo e ângulo diferentes em cada imagem.",
     "- Se houver duas ou mais variações confirmadas do produto, mostre TODAS juntas na imagem 1 (Banner principal) e na imagem 8 (Banner final). Não omita nem invente variações.",
     "- Use pessoas somente quando demonstrarem um benefício real. Escolha homem ou mulher conforme o produto, o público e a situação; em produtos de uso amplo, varie entre homem e mulher nas cenas humanas, sem repetir sempre a mesma pessoa e sem forçar uma presença humana inadequada.",
-    "- Não inclua texto, letras, números, medidas, setas, logos ou marcas d'água.",
+    "- Não renderize texto no Banner principal, nas Quatro imagens nem no Banner final. Essas imagens devem explicar o produto visualmente, sem poluição gráfica.",
+    `- Somente nas Duas imagens (imagens 6 e 7), o texto pode ser usado de forma opcional e apenas quando necessário. ${DUAL_IMAGE_TEXT_RULE}`,
+    `- Quatro imagens (300 × 225): ${FOUR_CLOSEUP_RULE}`,
     "- Nos banners 1464 × 600, mantenha o produto e os elementos essenciais dentro da área segura central aproximada de 600 × 450.",
     "- Produza as imagens na ordem abaixo e respeite exatamente o tamanho indicado para cada uma.",
     ""
@@ -135,13 +193,13 @@ export function buildFullImagePrompt(plan, title = "") {
     "- No máximo duas imagens podem ser exclusivamente lifestyle; as demais devem demonstrar uma informação decisiva.",
     "- Não esconda limitações comprovadas e não sugira quantidade, escala, firmeza, resistência, segurança ou compatibilidade inexistentes.",
     "- Pessoas só devem aparecer para explicar escala ou uso correto.",
-    "- Qualquer texto visual indicado abaixo é uma orientação para sobreposição posterior. NÃO renderize letras, números ou setas na fotografia gerada.",
+    "- Se uma medida, compatibilidade ou limitação comprovada exigir texto, coloque-o somente nas imagens 6 ou 7. Nas demais, demonstre visualmente.",
     ""
   );
   if (plan?.salesStrategy) {
     lines.push(`Direção de venda: ${clean(plan.salesStrategy.direction, 800)}`,
       `Cliente e desejo: ${clean(plan.salesStrategy.buyer, 700)}; ${clean(plan.salesStrategy.desire, 700)}`,
-      "Cada imagem deve reforçar o ângulo comercial do seu módulo sem adicionar texto à própria imagem.", "");
+      "Cada imagem deve reforçar o ângulo do seu módulo; use texto apenas nas imagens 6 e 7 e somente quando indispensável para a compreensão.", "");
   }
   briefs.forEach((brief, index) => {
     lines.push(`${index + 1}. ${clean(brief.module, 300)} (${clean(brief.size, 80)})`);
@@ -152,8 +210,8 @@ export function buildFullImagePrompt(plan, title = "") {
     if (antiReturn && brief.return_risk_reduced) lines.push(`Risco de devolução reduzido: ${clean(brief.return_risk_reduced, 700)}`);
     if (antiReturn && brief.must_show) lines.push(`Precisa ficar visível: ${clean(brief.must_show, 900)}`);
     if (antiReturn && brief.must_not_suggest) lines.push(`Não pode sugerir: ${clean(brief.must_not_suggest, 900)}`);
-    if (antiReturn && brief.overlay_text) lines.push(`Texto visual opcional para adicionar depois, sem renderizar na foto: ${clean(brief.overlay_text, 300)}`);
-    lines.push(`Prompt: ${clean(brief.prompt, 3000)}`, "");
+    if ((index === 5 || index === 6) && brief.overlay_text) lines.push(`Texto minimalista opcional na imagem: ${clean(brief.overlay_text, 300)}`);
+    lines.push(`Prompt: ${imagePromptForBrief(brief, index)}`, "");
   });
   lines.push("Entregue as imagens separadamente, na sequência indicada, nunca reunidas em uma única imagem.");
   return lines.join("\n");

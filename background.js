@@ -1,5 +1,6 @@
+import {runAdaptive, GENERATION_LIMIT_MS, COMBINED_LIMIT_MS} from "./generation-policy.js";
 import {DEFAULTS, settings, isSellerURL, isAplusEditorURL, safeSellerURL, makeSlots} from "./shared.js";
-import {generateStructured, generateTexts, testApiKey} from "./openai.js";
+import {generateStructured, generateTexts, testApiKey, testProviderModels, freeCatalog} from "./openai.js";
 import {writeAmazonField} from "./page-writer.js";
 import {normalizeAsins, inspectProductHTML, scanSellerCatalogPage} from "./catalog-audit.js";
 import {generatePlan, scoreAplus} from "./planning.js";
@@ -7,10 +8,11 @@ import {PROJECT_STATUS, createProject, factualDescription, normalizeAsin, valida
 import {isPanelSender} from "./panel-connection.js";
 import {captureProductPage, matchesProductURL} from "./product-page.js";
 import {encryptApiKey, decryptApiKey, isCloudKeyRecord} from "./key-sync.js";
-import {providerForModel, routesFor} from "./providers.js";
+import {providerForModel, routesFor, DISPLAY_MODELS} from "./providers.js";
 import {antiReturnQualityIssues, buildSalesStrategy, compactSalesStrategy} from "./strategy.js";
 import {captureAmazonReviewPage, listingOptimizerRequest, matchesAmazonReviewURL,
   normalizeListingOptimization, normalizeReviewAnalysis, reviewAnalyzerRequest} from "./listing-intelligence.js";
+import {captureMarketPage, marketURL, marketRequest, marketSignature, validateMarketReport} from "./market-intelligence.js";
 
 // Somente páginas confiáveis da extensão leem a sessão. A chave nunca vai ao content script.
 const ready = Promise.all([
@@ -24,12 +26,13 @@ let auditActive = null;
 let planningActive = null;
 let projectActive = null;
 let intelligenceActive = null;
+let modelTestActive = null;
 let stateQueue = Promise.resolve();
 let draftQueue = Promise.resolve();
 const activeStates = new Set(["scanning", "generating", "filling"]);
 const auditActiveStates = new Set(["queued", "checking"]);
 const planningActiveStates = new Set(["planning"]);
-const EXTENSION_VERSION = chrome.runtime.getManifest?.().version || "1.5.16";
+const EXTENSION_VERSION = chrome.runtime.getManifest?.().version || "1.5.24";
 const PAGE_CHANNEL = `aplus-page-v${EXTENSION_VERSION}`;
 
 function scoreProjectQuality(project, {slots = project.slots?.length ? project.slots : makeSlots(project.config),
@@ -42,9 +45,36 @@ function scoreProjectQuality(project, {slots = project.slots?.length ? project.s
   return quality;
 }
 
-async function providerKeys(model) {
-  const saved=await chrome.storage.local.get(["apiKeys","apiKey"]), keys={...(saved.apiKeys||{})};
-  if(saved.apiKey){const provider=providerForModel(model)==="auto"?"gemini":providerForModel(model);if(!keys[provider])keys[provider]=saved.apiKey}
+function legacyKeyProvider(key) {
+  if (String(key||"").startsWith("gsk_")) return "groq";
+  // The old single-key field belonged to Gemini. Never reassign it based on
+  // the selected model (especially the new xKiro default).
+  return "gemini";
+}
+function verificationPurpose(purpose){return ["texts","copy","technical"].includes(purpose)?"texts":"planning";}
+function verifiedModelsFor(preferences,purpose){
+  const wanted=verificationPurpose(purpose),now=Date.now(),models=[];
+  for(const report of Object.values(preferences.tests||{})){
+    if(now-Number(report?.testedAt||0)>86400000)continue;
+    for(const row of report?.results||[]){
+      const task=row.tasks?.[wanted];
+      if((task?.status||row.status)!=="working")continue;
+      models.push(row.model);
+      if(row.resolvedModel&&row.resolvedModel!==row.model){
+        const provider=providerForModel(row.model);
+        models.push(`${provider}/${String(row.resolvedModel).replace(new RegExp(`^${provider}/`),"")}`);
+      }
+    }
+  }
+  return [...new Set(models)];
+}
+async function providerKeys(model,purpose="texts") {
+  const saved=await chrome.storage.local.get(["apiKeys","apiKey","modelPreferences"]), keys={...(saved.apiKeys||{})};
+  if(saved.apiKey){const provider=legacyKeyProvider(saved.apiKey);if(!keys[provider])keys[provider]=saved.apiKey}
+  const preferences=saved.modelPreferences||{};
+  keys.__disabledModels=preferences.disabledModels||[];
+  keys.__verifiedModels=verifiedModelsFor(preferences,purpose);
+  keys.__useOnlyVerified=!!preferences.useOnlyVerified;
   return keys;
 }
 async function keyProof(provider, apiKey) {
@@ -52,16 +82,29 @@ async function keyProof(provider, apiKey) {
   const digest = await crypto.subtle.digest("SHA-256", bytes);
   return [...new Uint8Array(digest)].map(value => value.toString(16).padStart(2, "0")).join("");
 }
+let generationWrites = Promise.resolve();
+let generationSnapshot = null;
+function publishGeneration(progress) {
+  generationSnapshot=progress;
+  generationWrites=generationWrites.catch(()=>{}).then(()=>chrome.storage.session.set({generationProgress:progress})).catch(()=>{});
+}
 async function routed(model,purpose,onStage,operation) {
-  const routes=routesFor(model,await providerKeys(model),purpose);
-  if(!routes.length)throw new Error(model==="auto/economico"?"Cadastre ao menos uma API Key para usar o modo automático.":"Cadastre a API Key do provedor selecionado.");
-  let last;
-  for(let index=0;index<routes.length;index++){
-    const route=routes[index];
-    try{return await operation(route.apiKey,route.model,message=>onStage?.(`${message} · ${route.model}`))}
-    catch(error){last=error;if(/cancelad/i.test(error.message||""))throw error;if(index+1<routes.length)onStage?.(`Modelo indisponível. Alternando para ${routes[index+1].model}…`)}
+  const task=projectActive || intelligenceActive || active || planningActive;
+  const signal=task?.controller.signal;
+  if (task && !task.generationDeadline) {
+    task.generationStarted=Date.now();
+    task.generationDeadline=task.generationStarted+(task.generationLimit || GENERATION_LIMIT_MS);
   }
-  throw last;
+  const saved=await chrome.storage.local.get("generationHistory");
+  return runAdaptive({model,purpose,keys:await providerKeys(model,purpose),history:saved.generationHistory||{},signal,
+    deadlineAt:task?.generationDeadline || Date.now()+GENERATION_LIMIT_MS,
+    catalog:freeCatalog, operation,
+    onProgress:progress=>{
+      const update={...progress,startedAt:task?.generationStarted||progress.startedAt};
+      publishGeneration(update);
+      onStage?.(`${progress.stage}${progress.model?` · ${progress.model}`:""}${progress.reason?` · ${progress.reason}`:""}`);
+    },
+    saveHistory:history=>chrome.storage.local.set({generationHistory:history})});
 }
 
 async function readProjects() {
@@ -113,7 +156,7 @@ async function generateProjectDraft(project, signal, onStage = () => {}) {
   if (!next.title) throw new Error("Informe o título do produto.");
   if (!description) throw new Error("Informe a descrição ou ao menos um fato confirmado.");
   const strategy = buildSalesStrategy(next);
-  const generated = await routed(cfg.model,"texts",onStage,(apiKey,model,routedStage)=>generateTexts({apiKey,title:next.title,description,model,slots,strategy,signal,onStage:routedStage}));
+  const generated = await routed(cfg.model,"texts",onStage,(apiKey,model,routedStage,routeSignal)=>generateTexts({apiKey,title:next.title,description,model,slots,strategy,signal:routeSignal,onStage:routedStage}));
   next.slots = slots; next.texts = generated.texts; next.notes = generated.notes;
   next.quality = scoreProjectQuality(next, {slots, texts: next.texts, description});
   next.approved = false; next.status = "review"; next.fillReport = null; next.error = ""; next.updatedAt = Date.now();
@@ -148,8 +191,9 @@ Retorne somente o JSON exigido, com todos os campos solicitados no schema.`;
 
 async function startProjectQueue(ids) {
   if (projectActive) throw new Error("Uma geração de projetos já está em andamento.");
-  if (active || planningActive) throw new Error("Aguarde a operação atual terminar.");
+  if (active || planningActive || intelligenceActive) throw new Error("Aguarde a operação atual terminar.");
   const state = await readProjects();
+  if (projectActive || active || planningActive || intelligenceActive) throw new Error("Aguarde a operação atual terminar.");
   const selected = [...new Set(ids || [])].slice(0, 50).filter(id => state.projects.some(item => item.id === id));
   if (!selected.length) throw new Error("Selecione ao menos um projeto.");
   const task = {id: crypto.randomUUID(), controller: new AbortController()}; projectActive = task;
@@ -159,6 +203,7 @@ async function startProjectQueue(ids) {
     const keepAlive = setInterval(() => chrome.runtime.getPlatformInfo().catch(() => {}), 20000);
     try {
       for (let index = 0; index < selected.length; index++) {
+        delete task.generationDeadline; delete task.generationStarted;
         if (task.controller.signal.aborted) throw new Error("Geração em massa cancelada.");
         let current = await readProjects();
         const projectIndex = current.projects.findIndex(item => item.id === selected[index]);
@@ -210,7 +255,7 @@ async function runPlanning(task, request) {
     const cfg = settings(request.config);
     const strategy = buildSalesStrategy({title: request.title, description: request.description, config: cfg});
     await planningState({id: task.id, status: "planning", message: "Analisando o produto e criando o planejamento…"});
-    const planResult = await routed(cfg.model,"planning",message=>planningState({message}).catch(()=>{}),(apiKey,model,onStage)=>generatePlan({apiKey,title:request.title.trim(),description:request.description.trim(),model,strategy,signal:task.controller.signal,onStage,onRateLimit:rateLimit=>planningState({rateLimit}).catch(()=>{})}));
+    const planResult = await routed(cfg.model,"planning",message=>planningState({message}).catch(()=>{}),(apiKey,model,onStage,routeSignal)=>generatePlan({apiKey,title:request.title.trim(),description:request.description.trim(),model,strategy,signal:routeSignal,onStage,onRateLimit:rateLimit=>planningState({rateLimit}).catch(()=>{})}));
     if (task.controller.signal.aborted) throw new Error("Operação cancelada.");
     await chrome.storage.local.set({planResult});
     await planningState({status: "done", message: "Planejamento concluído. Revise as informações e os briefings."});
@@ -225,7 +270,7 @@ async function runPlanning(task, request) {
 
 async function startPlanning(message) {
   if (planningActive) throw new Error("Um planejamento já está em andamento.");
-  if (active) throw new Error("Aguarde a geração e o preenchimento terminarem.");
+  if (active || projectActive || intelligenceActive) throw new Error("Aguarde a geração e o preenchimento terminarem.");
   if (typeof message.title !== "string" || !message.title.trim()) throw new Error("Informe o título do produto.");
   if (typeof message.description !== "string" || !message.description.trim()) throw new Error("Informe a descrição e as informações reais do produto.");
   const task = {id: crypto.randomUUID(), controller: new AbortController()};
@@ -724,7 +769,7 @@ async function run(task, request) {
     if (task.controller.signal.aborted) throw new Error("Operação cancelada.");
     await state({status: "generating", message: "Gerando textos em português…", target, ...inspected});
     const strategy = buildSalesStrategy({title: request.title, description: request.description, config: cfg});
-    const generated = await routed(cfg.model,"texts",message=>state({message}).catch(()=>{}),(apiKey,model,onStage)=>generateTexts({apiKey,title:request.title.trim(),description:request.description.trim(),model,slots:inspected.slots,strategy,signal:task.controller.signal,onStage,onRateLimit:rateLimit=>state({rateLimit}).catch(()=>{})}));
+    const generated = await routed(cfg.model,"texts",message=>state({message}).catch(()=>{}),(apiKey,model,onStage,routeSignal)=>generateTexts({apiKey,title:request.title.trim(),description:request.description.trim(),model,slots:inspected.slots,strategy,signal:routeSignal,onStage,onRateLimit:rateLimit=>state({rateLimit}).catch(()=>{})}));
     if (task.controller.signal.aborted) throw new Error("Operação cancelada.");
     await state({status: "filling", message: "Textos validados. Preenchendo os campos identificados…", generated});
     await tabById(target.tabId, target.url);
@@ -745,7 +790,7 @@ async function run(task, request) {
 
 async function start(message) {
   if (active) throw new Error("Uma operação já está em andamento.");
-  if (planningActive) throw new Error("Aguarde o planejamento terminar.");
+  if (planningActive || projectActive || intelligenceActive) throw new Error("Aguarde o planejamento ou a geração atual terminar.");
   if (typeof message.title !== "string" || !message.title.trim() || message.title.length > 1000) throw new Error("Informe um título com até 1.000 caracteres.");
   if (typeof message.description !== "string" || !message.description.trim() || message.description.length > 18000) throw new Error("Informe uma descrição com até 18.000 caracteres.");
   const cfg = settings(message.config);
@@ -784,9 +829,9 @@ async function listingOperation(project, kind) {
         reviews: workspace.draft.reviews, competitorReviews: workspace.draft.competitorReviews, returnNotes: workspace.draft.returnNotes});
       if (!workspace.draft.reviews && !workspace.draft.competitorReviews && !workspace.draft.returnNotes)
         throw new Error("Cole ao menos uma avaliação ou comentário de devolução para analisar.");
-      const reviewAnalysis = await routed(model, "analysis", () => {}, (apiKey, routedModel, onStage) =>
+      const reviewAnalysis = await routed(model, "analysis", () => {}, (apiKey,routedModel,onStage,routeSignal)=>
         generateStructured({apiKey, title: project.title || project.asin, description: requestData.input,
-          model: routedModel, instructions: requestData.instructions, signal: task.controller.signal, onStage,
+          model: routedModel, instructions: requestData.instructions, signal: routeSignal, onStage,
           initialStage: "Analisando avaliações e causas de devolução…", initialOutputTokens: 4400,
           validate: raw => {
             const value = normalizeReviewAnalysis(raw, requestData.sampleSize), issues = [];
@@ -803,9 +848,9 @@ async function listingOperation(project, kind) {
         goal: workspace.draft.goal, reviewAnalysis});
       if (!(workspace.draft.title || project.title) || ![workspace.draft.bullets, workspace.draft.description, workspace.draft.facts, factualDescription(project)].some(Boolean))
         throw new Error("Informe o título e ao menos os bullets, a descrição ou os fatos confirmados.");
-      const listingOptimization = await routed(model, "analysis", () => {}, (apiKey, routedModel, onStage) =>
+      const listingOptimization = await routed(model, "listing", () => {}, (apiKey,routedModel,onStage,routeSignal)=>
         generateStructured({apiKey, title: workspace.draft.title || project.title, description: requestData.input,
-          model: routedModel, instructions: requestData.instructions, signal: task.controller.signal, onStage,
+          model: routedModel, instructions: requestData.instructions, signal: routeSignal, onStage,
           initialStage: "Otimizando o anúncio sem criar promessas…", initialOutputTokens: 5000,
           validate: raw => {
             const value = normalizeListingOptimization(raw), issues = [];
@@ -824,15 +869,58 @@ async function listingOperation(project, kind) {
   }
 }
 
+async function marketOperation(project, tool) {
+  if (intelligenceActive || projectActive || active || planningActive)
+    throw new Error("Aguarde a operação atual terminar.");
+  const request = marketRequest(project, tool);
+  const task = {id: crypto.randomUUID(), controller: new AbortController()};
+  intelligenceActive = task;
+  const keepAlive = setInterval(() => chrome.runtime.getPlatformInfo().catch(() => {}), 20000);
+  try {
+    const report = await routed(project.market.model, tool, () => {}, (apiKey, model, onStage, signal) =>
+      generateStructured({apiKey, model, signal, onStage, title: project.title || project.market.draft.query,
+        description: request.input, instructions: request.instructions, initialOutputTokens: 3800,
+        initialStage: "Analisando a amostra e preparando recomendações…",
+        validate: raw => validateMarketReport(raw, tool, project)}));
+    if (task.controller.signal.aborted) throw new Error("Operação cancelada.");
+    // Merge only this report into the latest saved project, preserving edits from other panels.
+    const saved = await readProjects(), latest = saved.projects.find(item => item.id === project.id);
+    if (!latest) throw new Error("O projeto foi removido durante a análise. O resultado não foi salvo.");
+    report.generatedAt = Date.now(); report.inputSignature = marketSignature(project, tool);
+    report.basis = {title: project.title, asin: project.asin, draft: project.market.draft};
+    latest.market.reports[tool] = report;
+    latest.updatedAt = Date.now();
+    return writeProjects(saved.projects, saved.activeProjectId);
+  } finally {
+    clearInterval(keepAlive);
+    if (intelligenceActive === task) intelligenceActive = null;
+  }
+}
+
 async function handle(message) {
   await ready;
   switch (message.action) {
     case "panelHello": return {version: EXTENSION_VERSION};
+    case "generationStatus": {
+      const data=await chrome.storage.session.get("generationProgress");
+      const history=(await chrome.storage.local.get("generationHistory")).generationHistory||{};
+      let progress=generationSnapshot || data.generationProgress || null;
+      if (progress?.status==="running" && !(projectActive || intelligenceActive || active || planningActive)) {
+        progress={...progress,status:"error",stage:"A geração foi interrompida. Tente novamente.",updatedAt:Date.now()};
+        publishGeneration(progress);
+      }
+      return {progress,history:Object.values(history).sort((a,b)=>b.updatedAt-a.updatedAt).slice(0,20)};
+    }
+    case "generationCancel": {
+      const task=projectActive || intelligenceActive || active || planningActive;
+      task?.controller.abort(new Error("Operação cancelada."));
+      return {};
+    }
     case "status": {
       await draftQueue;
       const [temporary, persistent, synced] = await Promise.all([
         chrome.storage.session.get(["job", "auditJob", "planningJob", "projectJob"]),
-        chrome.storage.local.get(["apiKey", "keyFingerprint", "apiKeys", "keyFingerprints", "config", "draft", "formOptions", "auditItems", "planResult", "qualityResult", "projects", "activeProjectId"]),
+        chrome.storage.local.get(["apiKey", "keyFingerprint", "apiKeys", "keyFingerprints", "modelPreferences", "config", "draft", "formOptions", "auditItems", "planResult", "qualityResult", "projects", "activeProjectId"]),
         chrome.storage.sync?.get ? chrome.storage.sync.get(["encryptedStudioKey","encryptedStudioKeys"]) : Promise.resolve({})
       ]);
       const saved = {...persistent, ...temporary};
@@ -846,15 +934,16 @@ async function handle(message) {
         saved.planningJob = await planningState({status: "error", message: "O Chrome interrompeu o planejamento. Tente novamente."});
       }
       const cloud = isCloudKeyRecord(synced.encryptedStudioKey) ? synced.encryptedStudioKey : null;
-      const apiKeys={...(saved.apiKeys||{})};if(saved.apiKey&&!apiKeys.gemini)apiKeys.gemini=saved.apiKey;
-      const keyFingerprints={...(saved.keyFingerprints||{})};if(saved.keyFingerprint&&!keyFingerprints.gemini)keyFingerprints.gemini=saved.keyFingerprint;
-      const keyStates=Object.fromEntries(["openai","gemini","kira","groq","xkiro"].map(provider=>[provider,{saved:!!apiKeys[provider],fingerprint:keyFingerprints[provider]||apiKeys[provider]?.slice(-4)||null}]));
+      const apiKeys={...(saved.apiKeys||{})},legacyProvider=legacyKeyProvider(saved.apiKey);if(saved.apiKey&&!apiKeys[legacyProvider])apiKeys[legacyProvider]=saved.apiKey;
+      const keyFingerprints={...(saved.keyFingerprints||{})};if(saved.keyFingerprint&&!keyFingerprints[legacyProvider])keyFingerprints[legacyProvider]=saved.keyFingerprint;
+      const providers=["openai","gemini","kira","groq","xkiro","openrouter","deepseek"];
+      const keyStates=Object.fromEntries(providers.map(provider=>[provider,{saved:!!apiKeys[provider],fingerprint:keyFingerprints[provider]||apiKeys[provider]?.slice(-4)||null}]));
       const cloudRecords={...(synced.encryptedStudioKeys||{})};if(cloud&&!cloudRecords.gemini)cloudRecords.gemini=cloud;
-      const cloudKeyStates=Object.fromEntries(["openai","gemini","kira","groq","xkiro"].map(provider=>[provider,{saved:!!isCloudKeyRecord(cloudRecords[provider]),fingerprint:cloudRecords[provider]?.fingerprint||null}]));
+      const cloudKeyStates=Object.fromEntries(providers.map(provider=>[provider,{saved:!!isCloudKeyRecord(cloudRecords[provider]),fingerprint:cloudRecords[provider]?.fingerprint||null}]));
       const anyKey=Object.values(keyStates).find(item=>item.saved);
       return {job: saved.job || null, keySaved: !!anyKey, keyFingerprint: anyKey?.fingerprint || null,
         cloudKeySaved: !!cloud, cloudKeyFingerprint: cloud?.fingerprint || null,
-        keyStates,cloudKeyStates,
+        keyStates,cloudKeyStates,modelPreferences:saved.modelPreferences||{tests:{},disabledModels:[],useOnlyVerified:false},
         keyMasked: anyKey ? `************${anyKey.fingerprint||""}` : "",
         config: saved.config || DEFAULTS, draft: saved.draft || {}, formOptions: saved.formOptions || null,
         auditJob: saved.auditJob || null, auditItems: saved.auditItems || [], planningJob: saved.planningJob || null,
@@ -870,6 +959,67 @@ async function handle(message) {
       await chrome.storage.session.set({keyTestProof: {provider, digest: await keyProof(provider, apiKey), testedAt: Date.now()}});
       return result;
     }
+    case "testModels": {
+      const provider=String(message.provider||"");
+      const keys=await providerKeys(`${provider}/probe`),apiKey=keys[provider];
+      if(!apiKey)throw new Error("Salve e teste a chave deste provedor primeiro.");
+      const report=await testProviderModels({apiKey,provider,models:DISPLAY_MODELS[provider]||[]});
+      const saved=await chrome.storage.local.get("modelPreferences"),modelPreferences={tests:{...(saved.modelPreferences?.tests||{}),[provider]:report},
+        disabledModels:[...(saved.modelPreferences?.disabledModels||[])],useOnlyVerified:true};
+      await chrome.storage.local.set({modelPreferences});return {report,modelPreferences};
+    }
+    case "modelTestStatus": {
+      const saved=await chrome.storage.session.get("modelTestProgress");
+      return {progress:saved.modelTestProgress||null,running:!!modelTestActive};
+    }
+    case "testAllModels": {
+      if(modelTestActive)throw new Error("A verificação de modelos já está em andamento.");
+      const keys=await providerKeys("auto/economico","texts");
+      const providerOrder=["openai","gemini","kira","groq","xkiro","openrouter","deepseek"];
+      const providers=providerOrder.filter(provider=>String(keys[provider]||"").trim()&&(DISPLAY_MODELS[provider]||[]).length);
+      if(!providers.length)throw new Error("Salve e teste ao menos uma chave antes de verificar os modelos.");
+      const totalModels=providers.reduce((sum,provider)=>sum+(DISPLAY_MODELS[provider]?.length||0),0);
+      const runId=crypto.randomUUID();modelTestActive={id:runId};
+      let completedModels=0,progressWrites=Promise.resolve();
+      let progress={id:runId,status:"running",startedAt:Date.now(),updatedAt:Date.now(),providers,totalProviders:providers.length,
+        totalModels,completedModels:0,lastProvider:"",lastModel:"",providerStates:Object.fromEntries(providers.map(provider=>[provider,"waiting"]))};
+      const publish=patch=>{progress={...progress,...patch,updatedAt:Date.now()};progressWrites=progressWrites.catch(()=>{}).then(()=>chrome.storage.session.set({modelTestProgress:progress})).catch(()=>{});};
+      publish({});
+      try{
+        const reports=await Promise.all(providers.map(async provider=>{
+          publish({lastProvider:provider,providerStates:{...progress.providerStates,[provider]:"running"}});
+          try{
+            const report=await testProviderModels({apiKey:keys[provider],provider,models:DISPLAY_MODELS[provider],onResult:row=>{
+              completedModels++;
+              publish({completedModels,lastProvider:provider,lastModel:row.model});
+            }});
+            publish({providerStates:{...progress.providerStates,[provider]:"done"}});return report;
+          }catch{
+            publish({providerStates:{...progress.providerStates,[provider]:"error"}});
+            return {provider,testedAt:Date.now(),results:[],error:"Não foi possível concluir a verificação deste provedor."};
+          }
+        }));
+        const saved=await chrome.storage.local.get("modelPreferences"),old=saved.modelPreferences||{},tests={...(old.tests||{})};
+        for(const report of reports)tests[report.provider]=report;
+        const modelPreferences={tests,disabledModels:[...(old.disabledModels||[])],useOnlyVerified:true};
+        await chrome.storage.local.set({modelPreferences});
+        publish({status:"done",completedModels:totalModels,finishedAt:Date.now(),lastModel:""});await progressWrites;
+        return {reports,modelPreferences,providers};
+      }catch(error){publish({status:"error",finishedAt:Date.now()});await progressWrites;throw error;}
+      finally{modelTestActive=null;}
+    }
+    case "modelPreferences": {
+      const saved=await chrome.storage.local.get("modelPreferences"),old=saved.modelPreferences||{},tests=old.tests||{};
+      let disabledModels=[...(old.disabledModels||[])];
+      if(message.hideFailed){
+        const failures=Object.values(tests).flatMap(test=>(test.results||[]).filter(row=>
+          !Object.values(row.tasks||{}).some(task=>task.status==="working")&&["unavailable","unstable","key_error"].includes(row.status)).map(row=>row.model));
+        disabledModels=[...new Set([...disabledModels,...failures])];
+      }
+      if(message.showAll)disabledModels=[];
+      const modelPreferences={tests,disabledModels,useOnlyVerified:message.useOnlyVerified===undefined?!!old.useOnlyVerified:!!message.useOnlyVerified};
+      await chrome.storage.local.set({modelPreferences});return modelPreferences;
+    }
     case "saveKey": {
       const apiKey = String(message.apiKey || "").trim();
       if (!apiKey || apiKey.length < 20 || apiKey.length > 1000 || /\s/.test(apiKey)) throw new Error("Cole uma API Key válida, sem espaços.");
@@ -883,7 +1033,7 @@ async function handle(message) {
       await chrome.storage.session.remove("keyTestProof");
       return {saved: true, fingerprint: keyFingerprint};
     }
-    case "forgetKey": {const provider=providerForModel(message.model||"gemini/gemini-3.5-flash"),old=await chrome.storage.local.get(["apiKeys","keyFingerprints"]),apiKeys={...(old.apiKeys||{})},keyFingerprints={...(old.keyFingerprints||{})};delete apiKeys[provider];delete keyFingerprints[provider];await chrome.storage.local.set({apiKeys,keyFingerprints});if(provider==="gemini")await chrome.storage.local.remove(["apiKey","keyFingerprint"]);return{};}
+    case "forgetKey": {const provider=providerForModel(message.model||"gemini/gemini-3.5-flash"),old=await chrome.storage.local.get(["apiKeys","keyFingerprints","apiKey"]),apiKeys={...(old.apiKeys||{})},keyFingerprints={...(old.keyFingerprints||{})};delete apiKeys[provider];delete keyFingerprints[provider];await chrome.storage.local.set({apiKeys,keyFingerprints});if(old.apiKey&&legacyKeyProvider(old.apiKey)===provider)await chrome.storage.local.remove(["apiKey","keyFingerprint"]);return{};}
     case "cloudSaveKey": {const provider=providerForModel(message.model),keys=await providerKeys(message.model),record=await encryptApiKey(keys[provider],message.passphrase),old=await chrome.storage.sync.get("encryptedStudioKeys"),encryptedStudioKeys={...(old.encryptedStudioKeys||{}),[provider]:record};await chrome.storage.sync.set({encryptedStudioKeys});return{saved:true,fingerprint:record.fingerprint};}
     case "cloudUnlockKey": {const provider=providerForModel(message.model),synced=await chrome.storage.sync.get("encryptedStudioKeys"),apiKey=await decryptApiKey(synced.encryptedStudioKeys?.[provider],message.passphrase),old=await chrome.storage.local.get(["apiKeys","keyFingerprints"]),apiKeys={...(old.apiKeys||{}),[provider]:apiKey},keyFingerprints={...(old.keyFingerprints||{}),[provider]:apiKey.slice(-4)};await chrome.storage.local.set({apiKeys,keyFingerprints});return{saved:true,fingerprint:apiKey.slice(-4)};}
     case "cloudRemoveKey": {const provider=providerForModel(message.model),old=await chrome.storage.sync.get("encryptedStudioKeys"),encryptedStudioKeys={...(old.encryptedStudioKeys||{})};delete encryptedStudioKeys[provider];await chrome.storage.sync.set({encryptedStudioKeys});return{};}
@@ -963,6 +1113,20 @@ async function handle(message) {
       return {...result, projectJob: temporary.projectJob || null};
     }
     case "projectSave": return upsertProject(message.project || {});
+    case "marketGenerate": return marketOperation(createProject(message.project || {}), message.tool);
+    case "marketTabs": {
+      const tabs = await chrome.tabs.query({currentWindow:true,url:"https://www.amazon.com.br/*"});
+      return tabs.filter(tab => marketURL(tab.url)).map(tab => ({id:tab.id,title:tab.title || tab.url,url:tab.url}));
+    }
+    case "marketCapture": {
+      if (!Number.isSafeInteger(message.tabId)) throw new Error("Selecione a aba que deseja capturar.");
+      const tab = await chrome.tabs.get(message.tabId);
+      if (!marketURL(tab.url)) throw new Error("Selecione uma busca ou anúncio da Amazon Brasil.");
+      const results = await chrome.scripting.executeScript({target:{tabId:tab.id},world:"ISOLATED",func:captureMarketPage});
+      const data = results[0]?.result;
+      if (!marketURL(data?.url) || !data?.rows?.length) throw new Error("A página mudou ou não contém anúncios reconhecidos.");
+      return data;
+    }
     case "listingAnalyze": return listingOperation(createProject(message.project || {}), "reviews");
     case "listingOptimize": return listingOperation(createProject(message.project || {}), "optimizer");
     case "listingCaptureReviews": {
@@ -1036,9 +1200,9 @@ async function handle(message) {
       return upsertProject(project);
     }
     case "projectPlan": {
-      if (projectActive || active || planningActive) throw new Error("Aguarde a operação atual terminar.");
+      if (projectActive || active || planningActive || intelligenceActive) throw new Error("Aguarde a operação atual terminar.");
       const project = createProject(message.project || {});
-      const task = {controller: new AbortController()}; projectActive = task;
+      const task = {controller: new AbortController(), generationLimit: COMBINED_LIMIT_MS}; projectActive = task;
       const keepAlive = setInterval(() => chrome.runtime.getPlatformInfo().catch(()=>{}), 20000);
       let textsSaved = false;
       try {
@@ -1047,7 +1211,7 @@ async function handle(message) {
           const drafted = await generateProjectDraft(project, task.controller.signal);Object.assign(project,drafted);await upsertProject(project);textsSaved=true;
         }
         const strategy = buildSalesStrategy(project);
-        if(!(project.approved&&project.plan?.imageBriefs?.length===8))project.plan=await routed(settings(project.config).model,"planning",()=>{},(apiKey,model,onStage)=>generatePlan({apiKey,title:project.title,description:factualDescription(project),model,strategy,signal:task.controller.signal,onStage}));
+        if(!(project.approved&&project.plan?.imageBriefs?.length===8))project.plan=await routed(settings(project.config).model,project.config.planningFocus === "returns" ? "returns" : "planning",()=>{},(apiKey,model,onStage,routeSignal)=>generatePlan({apiKey,title:project.title,description:factualDescription(project),model,strategy,signal:routeSignal,onStage}));
         if (project.plan) project.plan = {...project.plan, salesStrategy: compactSalesStrategy(strategy), categoryChecklist: strategy.checklist};
         project.quality = scoreProjectQuality(project);
         project.updatedAt = Date.now();
@@ -1058,8 +1222,24 @@ async function handle(message) {
         throw error;
       } finally { clearInterval(keepAlive); if (projectActive === task) projectActive = null; }
     }
+    case "projectImageBriefs": {
+      if (intelligenceActive || projectActive || active || planningActive) throw new Error("Aguarde a operação atual terminar.");
+      const project = createProject(message.project || {});
+      if (!project.title || !factualDescription(project)) throw new Error("Informe o título e os fatos do produto antes de gerar os briefings.");
+      const task = {controller: new AbortController()}; projectActive = task;
+      const keepAlive = setInterval(() => chrome.runtime.getPlatformInfo().catch(()=>{}), 20000);
+      try {
+        const strategy = buildSalesStrategy(project);
+        const plan = await routed(settings(project.config).model, project.config.planningFocus === "returns" ? "returns" : "planning", () => {},
+          (apiKey,model,onStage,routeSignal)=> generatePlan({apiKey, title: project.title, description: factualDescription(project),
+            model, strategy, signal: routeSignal, onStage}));
+        // Atomic update: a failed generation leaves the previous plan and reviewed texts intact.
+        project.plan = plan; project.updatedAt = Date.now();
+        return await upsertProject(project);
+      } finally { clearInterval(keepAlive); if (projectActive === task) projectActive = null; }
+    }
     case "projectRegenerate": {
-      if (projectActive || active || planningActive) throw new Error("Aguarde a operação atual terminar.");
+      if (projectActive || active || planningActive || intelligenceActive) throw new Error("Aguarde a operação atual terminar.");
       const project = createProject(message.project || {}), key = String(message.key || "");
       const slots = project.slots?.length ? project.slots : makeSlots(project.config);
       const slot = slots.find(item => item.key === key);
@@ -1070,7 +1250,7 @@ async function handle(message) {
       const task = {controller: new AbortController()}; projectActive = task;
       try {
         const strategy = buildSalesStrategy(project);
-        const generated = await routed(settings(project.config).model,"texts",()=>{},(apiKey,model,onStage)=>generateTexts({apiKey,title:project.title,description:factualDescription(project),model,slots:selectedSlots,strategy,signal:task.controller.signal,onStage}));
+        const generated = await routed(settings(project.config).model,selectedSlots.some(slot=>["question","answer","name","value"].includes(slot.role))?"technical":"copy",()=>{},(apiKey,model,onStage,routeSignal)=>generateTexts({apiKey,title:project.title,description:factualDescription(project),model,slots:selectedSlots,strategy,signal:routeSignal,onStage}));
         project.texts = {...project.texts, ...generated.texts};
         const checked = validateProject(project); project.texts = checked.texts; project.notes = [...project.notes, ...generated.notes].slice(-30);
         project.quality = scoreProjectQuality(project, {slots});
@@ -1079,7 +1259,7 @@ async function handle(message) {
       } finally { if (projectActive === task) projectActive = null; }
     }
     case "projectFixRepetitions": {
-      if (projectActive || active || planningActive) throw new Error("Aguarde a operação atual terminar.");
+      if (projectActive || active || planningActive || intelligenceActive) throw new Error("Aguarde a operação atual terminar.");
       const project = createProject(message.project || {});
       const slots = project.slots?.length ? project.slots : makeSlots(project.config);
       const description = factualDescription(project);
@@ -1095,8 +1275,8 @@ async function handle(message) {
       const selectedSlots = slots.filter(slot => targetKeys.includes(slot.key));
       const task = {controller: new AbortController()}; projectActive = task;
       try {
-        const generated = await routed(settings(project.config).model, "texts", () => {}, (apiKey, model, onStage) => generateTexts({
-          apiKey, title: project.title, description, model, slots: selectedSlots, strategy: buildSalesStrategy(project), signal: task.controller.signal, onStage,
+        const generated = await routed(settings(project.config).model, "texts", () => {}, (apiKey,model,onStage,routeSignal)=> generateTexts({
+          apiKey, title: project.title, description, model, slots: selectedSlots, strategy: buildSalesStrategy(project), signal: routeSignal, onStage,
           revisionPrompt: repetitionRevisionPrompt(project, slots, targetKeys, before)
         }));
         project.texts = {...project.texts, ...generated.texts};

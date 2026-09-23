@@ -10,7 +10,9 @@ export function providerForModel(model) {
   if(value.startsWith("gemini/"))return "gemini";
   if(value.startsWith("kira/"))return "kira";
   if(value.startsWith("tokenrouter/"))return "kira"; // migração da versão 1.3
+  if(value.startsWith("openrouter/"))return "openrouter";
   if(value.startsWith("xkiro/"))return "xkiro";
+  if(value.startsWith("deepseek/"))return "deepseek";
   return "groq";
 }
 
@@ -19,7 +21,7 @@ export function modelForRequest(model) {
   if(value==="tokenrouter/z-ai/glm-5.3-free")return "glm-5.3-free";
   // xKiro exige o ID completo do catálogo (vendor/model). O prefixo xkiro/
   // existe apenas dentro da extensão para distinguir o provedor.
-  return value.replace(/^(?:openai-api|kira|xkiro)\//,"");
+  return value.replace(/^(?:openai-api|kira|xkiro|openrouter|deepseek)\//,"");
 }
 
 function modelText(model={}) {
@@ -70,7 +72,9 @@ export function automaticCandidates(purpose="texts") {
   return purpose==="planning" ? [
     {provider:"openai",model:"openai-api/gpt-5.6-sol"},
     {provider:"xkiro",model:XKIRO_AUTO_QUALITY_MODEL},
+    {provider:"openrouter",model:"openrouter/auto-free"},
     {provider:"groq",model:"openai/gpt-oss-120b"},
+    {provider:"deepseek",model:"deepseek/deepseek-v4-flash"},
     {provider:"kira",model:"kira/glm-5.3-free"},
     {provider:"gemini",model:"gemini/gemini-3.5-flash"},
     {provider:"kira",model:"kira/qwen3.8-flash"},
@@ -80,7 +84,9 @@ export function automaticCandidates(purpose="texts") {
   ] : [
     {provider:"openai",model:"openai-api/gpt-5.6-sol"},
     {provider:"xkiro",model:XKIRO_AUTO_QUALITY_MODEL},
+    {provider:"openrouter",model:"openrouter/auto-free"},
     {provider:"groq",model:"openai/gpt-oss-120b"},
+    {provider:"deepseek",model:"deepseek/deepseek-v4-flash"},
     {provider:"kira",model:"kira/glm-5.3-free"},
     {provider:"gemini",model:"gemini/gemini-3.5-flash"},
     {provider:"kira",model:"kira/qwen3.8-flash"},
@@ -94,5 +100,70 @@ export function automaticCandidates(purpose="texts") {
 export function routesFor(model,keys={},purpose="texts") {
   const provider=providerForModel(model);
   const candidates=provider==="auto"?automaticCandidates(purpose):[{provider,model}];
-  return candidates.filter(item=>String(keys[item.provider]||"").trim()).map(item=>({...item,apiKey:String(keys[item.provider]).trim()}));
+  const disabled=new Set(Array.isArray(keys.__disabledModels)?keys.__disabledModels:[]);
+  const verified=new Set(Array.isArray(keys.__verifiedModels)?keys.__verifiedModels:[]);
+  // A trava de modelos aprovados vale para o automático. A escolha manual
+  // continua disponível como substituição consciente do usuário.
+  const verifiedOnly=provider==="auto"&&Boolean(keys.__useOnlyVerified);
+  return candidates.filter(item=>String(keys[item.provider]||"").trim() && !disabled.has(item.model) &&
+    (!verifiedOnly || verified.has(item.model))).map(item=>({...item,apiKey:String(keys[item.provider]).trim(),
+      verifiedOnly,verifiedModels:verified}));
+}
+
+export const DISPLAY_MODELS = Object.freeze({
+  openai:["openai-api/gpt-5.6-luna","openai-api/gpt-5.6-terra","openai-api/gpt-5.6-sol"],
+  kira:["kira/qwen3.8-flash","kira/glm-5.3-free"],
+  xkiro:[XKIRO_AUTO_QUALITY_MODEL],openrouter:["openrouter/auto-free"],
+  gemini:["gemini/gemini-3.5-flash"],
+  groq:["openai/gpt-oss-20b","openai/gpt-oss-120b","qwen/qwen3.8-27b"],
+  deepseek:["deepseek/deepseek-v4-flash","deepseek/deepseek-v4-pro"]
+});
+
+export const MODEL_MIGRATIONS = Object.freeze({
+  "gemini/gemini-2.5-flash":"gemini/gemini-3.5-flash",
+  "gemini/gemini-2.5-flash-lite":"gemini/gemini-3.5-flash",
+  "gemini/gemini-3.5-flash-lite":"gemini/gemini-3.5-flash",
+  "qwen/qwen3.6-27b":"qwen/qwen3.8-27b",
+  "llama-3.1-8b-instant":"openai/gpt-oss-120b",
+  "llama-3.3-70b-versatile":"openai/gpt-oss-120b",
+  "tokenrouter/z-ai/glm-5.3-free":"kira/glm-5.3-free",
+  "deepseek/deepseek-flash":"xkiro/auto-quality"
+});
+export const migrateModel = model => MODEL_MIGRATIONS[model] || model || XKIRO_AUTO_QUALITY_MODEL;
+
+// Free variants must be explicitly published with zero input/output price.
+// Never manufacture a :free suffix or silently strip it for a paid model.
+export function isOpenRouterFree(model) {
+  const pricing = model?.pricing || {};
+  return /:free$/.test(String(model?.id || "")) &&
+    ["prompt", "completion"].every(key => pricing[key] !== undefined && pricing[key] !== null && pricing[key] !== "" && Number(pricing[key]) === 0) &&
+    Object.values(pricing).every(value => value == null || value === "" || Number(value) === 0) &&
+    model?.architecture?.output_modalities?.includes("text") &&
+    model?.architecture?.input_modalities?.includes("text") && Number(model.context_length) >= 16000;
+}
+
+// A suitability estimate, not a benchmark of writing quality. Live history
+// corrects this initial ordering based on validated output and elapsed time.
+export function freeTaskScore(model, purpose = "texts", provider = "openrouter") {
+  if (provider === "openrouter" && !isOpenRouterFree(model)) return -Infinity;
+  if (provider === "xkiro" && !Number.isFinite(xkiroQualityScore(model))) return -Infinity;
+  const description = `${model.id} ${model.name || model.display_name || ""} ${model.description || ""}`.toLowerCase();
+  const params = model.supported_parameters || [];
+  const analytical = ["analysis", "technical", "returns", "planning", "research", "competitors", "bundles"].includes(purpose);
+  const complex=["texts","copy","technical","listing","analysis","returns","planning","research","competitors","bundles"].includes(purpose);
+  const sizes=[...description.matchAll(/(?:^|[^\d])(\d{1,3}(?:\.\d+)?)b(?:\b|[^a-z])/g)].map(match=>Number(match[1])).filter(Number.isFinite);
+  const largestSize=sizes.length?Math.max(...sizes):0;
+  if(complex&&largestSize>0&&largestSize<=8)return Number.NEGATIVE_INFINITY;
+  let score = provider === "xkiro" ? xkiroQualityScore(model) / 3 : 20;
+  if (params.includes("response_format") || params.includes("structured_outputs")) score += 14;
+  if (/multilingual|portuguese|português|instruction.following/.test(description)) score += 12;
+  if (/general.purpose|generalist|conversational|language capabilities/.test(description)) score += 10;
+  if (/reasoning|planning|analysis/.test(description)) score += analytical ? 18 : 5;
+  if (/creative|writing|marketing|copywriting/.test(description)) score += analytical ? 5 : 20;
+  if (/coding agent|software engineering|finance.focused|health and medicine.focused|coder|code model/.test(description)) score -= 35;
+  if (/nemotron/.test(description)) score += analytical ? 10 : 0;
+  if (/inkling|qwen|glm/.test(description)) score += analytical ? 4 : 10;
+  if (/mini|lite|small|\b8b\b/.test(description)) score -= 20;
+  if (/flash|lightning|high.throughput/.test(description)) score += 5;
+  return score;
 }

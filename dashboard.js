@@ -1,14 +1,17 @@
 import {makeSlots, isAplusEditorURL, SELLER_TAB_PATTERNS} from "./shared.js";
-import {buildFullImagePrompt} from "./planning.js";
+import {mountGenerationMonitor} from "./generation-ui.js";
+import {mountMarketWorkspace} from "./market-ui.js";
+import {buildFullImagePrompt, imagePromptForBrief} from "./planning.js";
 import {createProject, evidenceFor, parseQueue, PROJECT_STATUS} from "./projects.js";
 import {connectPanel} from "./panel-connection.js";
-import {providerForModel} from "./providers.js";
+import {providerForModel, migrateModel} from "./providers.js";
 import {buildSalesStrategy} from "./strategy.js";
 import {countReviewEntries, listingOptimizationText, normalizeListingWorkspace,
   reviewAnalysisText, reviewRiskContext} from "./listing-intelligence.js";
 
 const $ = id => document.getElementById(id);
 const send = connectPanel(chrome.runtime);
+mountGenerationMonitor(send);
 const sellerTabsInWindow = () => chrome.tabs.query({currentWindow: true, url: SELLER_TAB_PATTERNS});
 const recentFirst = tabs => [...tabs].sort((a, b) => Number(b.lastAccessed || 0) - Number(a.lastAccessed || 0));
 const sellerTabId = async () => {
@@ -21,18 +24,23 @@ const sellerTabId = async () => {
   return target.id;
 };
 
+const selectedProjectIds = new Set();
+let projectListSignature = "";
 let projects = [], activeId = "", projectJob = null, pollTimer, toastTimer;
 let currentTab = "product", currentWorkspace = "aplus", currentIntelligenceTool = "reviews", saving = false, dirty = false;
 let keySaved = false;
 let keyStates={};
+let modelPreferences={tests:{},disabledModels:[],useOnlyVerified:false};
+let modelTestPollTimer=null;
 let testedKeyCandidate="";
-const providerModel=()=>({openai:"openai-api/gpt-5.6-luna",gemini:"gemini/gemini-3.5-flash",kira:"kira/qwen3.8-flash",groq:"openai/gpt-oss-20b",xkiro:"xkiro/auto-quality"})[$("keyProvider").value];
+const providerLabels={openai:"OpenAI",gemini:"Gemini",kira:"KiraAI",groq:"Groq",xkiro:"xKiro",openrouter:"OpenRouter",deepseek:"DeepSeek"};
+const providerModel=()=>({openai:"openai-api/gpt-5.6-luna",gemini:"gemini/gemini-3.5-flash",kira:"kira/qwen3.8-flash",groq:"openai/gpt-oss-20b",xkiro:"xkiro/auto-quality",openrouter:"openrouter/auto-free",deepseek:"deepseek/deepseek-v4-flash"})[$("keyProvider").value];
 const dashboardKeyCandidate=()=>`${$("keyProvider").value}:${$("apiKey").value.trim()}`;
 function resetDashboardKeyTest(message="Teste obrigatório antes de salvar. O teste não gera conteúdo."){
   testedKeyCandidate="";$("keyTestStatus").textContent=message;$("saveKey").disabled=true;$("testKey").disabled=!$("apiKey").value.trim();
 }
 let productTabId = null, reviewTabId = null, reviewTabAsin = "", operationBusy = false, lastAmazonDiagnostic = null, previewStrategy = null;
-let moduleRecording = false, moduleRecordingTabId = null, lastModuleRecording = null, amazonModulesReady = false;
+let moduleRecording = false, moduleRecordingTabId = null, lastModuleRecording = null;
 const current = () => projects.find(item => item.id === activeId) || null;
 
 function toast(message, error = false) {
@@ -58,6 +66,7 @@ function diagnosticText(report) {
 }
 
 function renderAmazonDiagnostic(report, running = false) {
+  $("amazonTroubleshooting").open = true;
   const box = $("amazonDiagnostic"); box.hidden = false;
   $("diagnosticChecks").replaceChildren();
   $("diagnosticSummary").textContent = running ? "Executando diagnóstico…" : report?.summary || "Não foi possível concluir.";
@@ -108,6 +117,7 @@ function renderModuleRecorder(state = {}) {
   if (state.lastReport) lastModuleRecording = state.lastReport;
   const box = $("moduleRecorder");
   box.hidden = !moduleRecording && !lastModuleRecording && !state.interrupted;
+  if (moduleRecording || state.interrupted) $("amazonTroubleshooting").open = true;
   $("recordModules").disabled = moduleRecording || operationBusy;
   $("recordModules").textContent = moduleRecording ? "Registro em andamento…" : "Registrar montagem (suporte)";
   $("finishModuleRecording").disabled = !moduleRecording;
@@ -207,7 +217,7 @@ function collectProject() {
   const texts = {...old.texts};
   for (const area of $("textEditor").querySelectorAll("textarea[data-key]")) texts[area.dataset.key] = area.value;
   return createProject({...old, asin: $("asin").value, title: $("title").value, description: $("description").value, facts, texts,
-    listing: collectListingWorkspace(old),
+    listing: collectListingWorkspace(old), market: marketUI.collect(old),
     config: {model: $("model").value, faqCount: Number($("faqCount").value), specCount: Number($("specCount").value),
       strategyMode: $("strategyMode").value, templateMode: $("templateMode").value, customStrategy: $("customStrategy").value,
       planningFocus: document.querySelector('input[name="planningFocus"]:checked')?.value || "commercial",
@@ -261,12 +271,23 @@ function renderHeader(project) {
 }
 
 function renderProjects() {
+  const existingIds = new Set(projects.map(project => project.id));
+  for (const id of selectedProjectIds) if (!existingIds.has(id)) selectedProjectIds.delete(id);
+  $("queueSelectionCount").textContent = `${selectedProjectIds.size} selecionado(s)`;
   $("projectCount").textContent = projects.length;
+  const signature = JSON.stringify([activeId, $("projectSearch").value, [...selectedProjectIds], projects.map(({id, title, asin, status}) => [id, title, asin, status])]);
+  if (signature === projectListSignature) return;
+  projectListSignature = signature;
   const query = $("projectSearch").value.trim().toLowerCase(), list = $("projectList"); list.replaceChildren();
   const visible = projects.filter(item => !query || `${item.asin} ${item.title}`.toLowerCase().includes(query));
   for (const project of visible) {
     const row = document.createElement("div"); row.className = `project-item${project.id === activeId ? " active" : ""}`;
     const select = document.createElement("input"); select.type = "checkbox"; select.className = "queue-check"; select.dataset.id = project.id;
+    select.checked = selectedProjectIds.has(project.id);
+    select.addEventListener("change", () => {
+      if (select.checked) selectedProjectIds.add(project.id); else selectedProjectIds.delete(project.id);
+      $("queueSelectionCount").textContent = `${selectedProjectIds.size} selecionado(s)`;
+    });
     const open = document.createElement("button"); open.type = "button"; open.className = "project-open";
     const name = document.createElement("strong"); name.textContent = project.title || "Produto sem título";
     const asin = document.createElement("small"); asin.textContent = project.asin || "Sem ASIN";
@@ -351,7 +372,9 @@ function renderTexts(project) {
       const updateCounter = () => { counter.textContent = `${area.value.length}/${slot.limit}`; counter.classList.toggle("over", area.value.length > slot.limit); };
       area.addEventListener("input", () => { dirty = true; project.texts[slot.key] = area.value; project.approved = false; project.status = "review"; project.validationWarnings = []; project.quality = null; updateCounter();
         const next = evidenceFor(area.value, project); evidence.textContent = next.label; evidence.className = `evidence${next.level === "review" ? " review" : ""}`; renderHeader(project); });
-      updateCounter(); actions.append(evidence, counter, copy, regenerate); head.append(label, actions); row.append(head, area); group.append(row);
+      const fieldBox = document.createElement("div"); fieldBox.className = "text-field-box";
+      fieldBox.append(area, copy);
+      updateCounter(); actions.append(evidence, counter, regenerate); head.append(label, actions); row.append(head, fieldBox); group.append(row);
     }
     editor.append(group);
   }
@@ -359,21 +382,29 @@ function renderTexts(project) {
 
 function renderImages(project) {
   const box = $("imageBriefs"); box.replaceChildren();
-  if (!project.plan?.imageBriefs?.length) { const p = document.createElement("p"); p.className = "muted"; p.textContent = "Crie o planejamento na etapa Produto para receber os oito briefings."; box.append(p); return; }
+  const completeBriefing = buildFullImagePrompt(project.plan, project.title);
+  $("fullImageBriefing").value = completeBriefing;
+  $("fullBriefingDetails").hidden = !completeBriefing;
+  $("copyAllPrompts").disabled = !completeBriefing;
+  $("generateImageBriefs").textContent = project.plan?.imageBriefs?.length ? "Atualizar briefing completo" : "Gerar briefing completo";
+  if (!project.plan?.imageBriefs?.length) { const p = document.createElement("p"); p.className = "muted"; p.textContent = "Clique em Gerar briefing completo para criar os oito briefings sem regenerar os textos A+."; box.append(p); return; }
   project.plan.imageBriefs.forEach((brief, index) => {
     const row = document.createElement("div"); row.className = "brief-row";
     const h = document.createElement("h4"); h.textContent = `${index + 1}. ${brief.module} · ${brief.size}`;
     const angle = project.plan?.salesStrategy?.angles?.find(item => item.module === brief.module);
     const details = document.createElement("p"); details.textContent = `${angle ? `Ângulo: ${angle.angle} · ${angle.categoryFocus} | ` : ""}Objetivo: ${brief.goal} | Cena: ${brief.scene} | Composição: ${brief.composition}`;
-    const prompt = document.createElement("p"); prompt.className = "brief-prompt"; prompt.textContent = brief.prompt;
-    const copy = document.createElement("button"); copy.textContent = "Copiar prompt"; copy.onclick = () => navigator.clipboard.writeText(brief.prompt).then(() => toast("Prompt copiado."));
+    const prompt = document.createElement("p"); prompt.className = "brief-prompt"; prompt.textContent = imagePromptForBrief(brief, index);
+    const copy = document.createElement("button"); copy.textContent = "Copiar prompt"; copy.onclick = () => navigator.clipboard.writeText(imagePromptForBrief(brief, index)).then(() => toast("Prompt copiado."));
     row.append(h, details);
     if (project.config?.planningFocus === "returns") {
       const clarity = document.createElement("p"); clarity.className = "brief-clarity";
       clarity.textContent = [`Dúvida: ${brief.question_answered || "não informada"}`, `Risco reduzido: ${brief.return_risk_reduced || "não informado"}`,
         `Mostrar: ${brief.must_show || "não informado"}`, `Não sugerir: ${brief.must_not_suggest || "não informado"}`,
-        brief.overlay_text ? `Texto opcional posterior: ${brief.overlay_text}` : ""].filter(Boolean).join(" | ");
+        (index===5||index===6)&&brief.overlay_text ? `Texto minimalista opcional na imagem: ${brief.overlay_text}` : ""].filter(Boolean).join(" | ");
       row.append(clarity);
+    }
+    if (project.config?.planningFocus !== "returns" && (index===5||index===6) && brief.overlay_text) {
+      const caption = document.createElement("p"); caption.textContent = `Texto minimalista na imagem: ${brief.overlay_text}`; row.append(caption);
     }
     row.append(prompt, copy); box.append(row);
   });
@@ -585,6 +616,7 @@ function renderWorkspaceVisibility() {
   $("emptyState").hidden = hasProject;
   $("editor").hidden = !hasProject || currentWorkspace !== "aplus";
   $("listingWorkspace").hidden = !hasProject || currentWorkspace !== "listing";
+  $("marketWorkspace").hidden = !hasProject || currentWorkspace !== "market";
   for (const button of document.querySelectorAll("[data-workspace]")) button.classList.toggle("active", button.dataset.workspace === currentWorkspace);
 }
 
@@ -592,14 +624,14 @@ function renderEditor() {
   const project = current(); renderWorkspaceVisibility(); if (!project) return;
   renderHeader(project); $("asin").value = project.asin || ""; $("title").value = project.title || ""; $("description").value = project.description || "";
   const oldModel = project.config?.model;
-  $("model").value = oldModel === "gemini/gemini-2.5-flash" ? "gemini/gemini-3.5-flash" : oldModel === "gemini/gemini-2.5-flash-lite" ? "gemini/gemini-3.5-flash-lite" : oldModel === "deepseek/deepseek-flash" ? "xkiro/auto-quality" : oldModel || "auto/economico"; $("faqCount").value = project.config?.faqCount || 5; $("specCount").value = project.config?.specCount || 6;
+  $("model").value = migrateModel(oldModel); $("faqCount").value = project.config?.faqCount || 5; $("specCount").value = project.config?.specCount || 6;
   $("strategyMode").value = project.config?.strategyMode || "auto"; $("templateMode").value = project.config?.templateMode || "auto";
   $("customStrategy").value = project.config?.customStrategy || ""; $("customStrategyWrap").hidden = $("strategyMode").value !== "custom";
   const focus = project.config?.planningFocus === "returns" ? "returns" : "commercial";
   const focusInput = document.querySelector(`input[name="planningFocus"][value="${focus}"]`); if (focusInput) focusInput.checked = true;
   $("returnRiskNotes").value = project.config?.returnRiskNotes || ""; renderPlanningFocus(project);
   renderFacts(project); renderStrategy(project); renderTexts(project); renderImages(project); renderValidation(project); renderFillResult(project.fillReport);
-  renderIntelligence(project); switchTab(currentTab); renderWorkspaceVisibility();
+  renderIntelligence(project); marketUI.render(project); switchTab(currentTab); renderWorkspaceVisibility();
 }
 
 function renderJob() {
@@ -627,7 +659,7 @@ async function refresh() {
 
 async function refreshKeyState() {
   resetDashboardKeyTest();
-  const status = await send("status");keyStates=status.keyStates||{};const current=keyStates[$("keyProvider").value]||{};keySaved=!!current.saved;
+  const [status,testStatus] = await Promise.all([send("status"),send("modelTestStatus")]);keyStates=status.keyStates||{};modelPreferences=status.modelPreferences||modelPreferences;const current=keyStates[$("keyProvider").value]||{};keySaved=!!current.saved;
   $("apiState").textContent = keySaved ? `Chave configurada${current.fingerprint ? `, final ${current.fingerprint}` : ""}.` : "Nenhuma chave configurada para este provedor.";
   $("removeKey").disabled = !keySaved;
   $("savedKeyBox").hidden = !keySaved;
@@ -635,6 +667,73 @@ async function refreshKeyState() {
   $("savedKeyMask").value = keySaved ? `••••••••••••${current.fingerprint||""}` : "";
   $("saveKey").hidden = keySaved;
   $("testKey").hidden = keySaved;
+  $("testAllModels").disabled=!Object.values(keyStates).some(item=>item.saved)||!!testStatus.running;
+  renderModelPreferences();
+  renderModelVerificationProgress(testStatus.progress,testStatus.running);
+  if(testStatus.running)pollModelTestProgress();
+}
+
+function applyModelVisibility(){
+  const disabled=new Set(modelPreferences.disabledModels||[]);
+  for(const select of [$("model"),$("listingModel"),$("marketModel")])for(const option of select.options){
+    if(option.value.startsWith("divider-")||option.value==="auto/economico")continue;
+    option.hidden=disabled.has(option.value);
+  }
+}
+function renderAllModelSummary(){
+  const box=$("allModelSummary");box.replaceChildren();
+  const savedProviders=Object.entries(keyStates).filter(([,state])=>state.saved).map(([provider])=>provider);
+  if(!savedProviders.length){const p=document.createElement("p");p.className="muted";p.textContent="Salve ao menos uma chave para verificar os modelos.";box.append(p);return;}
+  const now=Date.now(),labels={working:"Aprovado",partial:"Parcial",unavailable:"Sem acesso",temporary:"Temporário",unstable:"Instável",key_error:"Chave recusada"};
+  for(const provider of savedProviders){
+    const report=modelPreferences.tests?.[provider],stale=report?.testedAt&&now-Number(report.testedAt)>86400000;
+    const tasks=(report?.results||[]).flatMap(row=>Object.values(row.tasks||{}));
+    const approved=tasks.filter(task=>task.status==="working").length,total=tasks.length;
+    const row=document.createElement("button");row.type="button";row.className="model-provider-summary";
+    const name=document.createElement("strong");name.textContent=providerLabels[provider]||provider;
+    const meta=document.createElement("span");
+    let state="pending",text="Ainda não verificado";
+    if(report?.error){state="error";text="Falha na última verificação";}
+    else if(stale){state="stale";text="Resultado expirado";}
+    else if(total&&approved===total){state="working";text=`${approved}/${total} testes aprovados`;}
+    else if(approved){state="partial";text=`${approved}/${total} testes aprovados`;}
+    else if(report){state="error";text="Nenhum teste aprovado";}
+    meta.className=`provider-summary-state ${state}`;meta.textContent=text;
+    row.append(name,meta);row.onclick=()=>{$("keyProvider").value=provider;refreshKeyState().catch(error=>toast(error.message,true));$("keyProvider").focus();};box.append(row);
+  }
+}
+function renderModelVerificationProgress(progress,running=false){
+  const box=$("modelVerificationProgress");
+  if(!progress){box.hidden=true;return;}
+  const active=running||progress.status==="running",done=progress.status==="done";
+  const recentDone=done&&Date.now()-Number(progress.finishedAt||0)<10000;
+  box.hidden=!(active||recentDone);
+  if(box.hidden)return;
+  const total=Math.max(1,Number(progress.totalModels||0)),completed=Math.min(total,Number(progress.completedModels||0));
+  $("modelVerificationBar").max=total;$("modelVerificationBar").value=completed;
+  $("modelVerificationCount").textContent=`${completed}/${Number(progress.totalModels||0)}`;
+  $("modelVerificationStage").textContent=done?"Verificação concluída":progress.lastModel?`Verificando ${providerLabels[progress.lastProvider]||progress.lastProvider} · ${progress.lastModel}`:"Preparando todos os provedores…";
+}
+async function pollModelTestProgress(){
+  clearTimeout(modelTestPollTimer);
+  try{const status=await send("modelTestStatus");renderModelVerificationProgress(status.progress,status.running);if(status.running)modelTestPollTimer=setTimeout(pollModelTestProgress,500);}
+  catch{modelTestPollTimer=setTimeout(pollModelTestProgress,1200);}
+}
+function renderModelPreferences(){
+  const provider=$("keyProvider").value,report=modelPreferences.tests?.[provider],box=$("modelTestResults");box.replaceChildren();
+  $("verifiedOnly").checked=!!modelPreferences.useOnlyVerified;
+  const labels={working:"FUNCIONA",partial:"PARCIAL",unavailable:"SEM ACESSO",temporary:"TEMPORÁRIO",unstable:"INSTÁVEL",key_error:"CHAVE RECUSADA"};
+  if(!report?.results?.length){const p=document.createElement("p");p.className="muted";p.textContent=report?.error||"Nenhum teste realizado para este provedor.";box.append(p);}
+  else for(const item of report.results){
+    const row=document.createElement("div");row.className="model-test-row";
+    const name=document.createElement("strong");name.textContent=item.model;
+    const status=document.createElement("span");status.className=`model-test-status ${item.status}`;status.textContent=labels[item.status]||item.status;
+    const taskLabel=purpose=>{const task=item.tasks?.[purpose];return task?`${purpose==="texts"?"Textos":"Briefings"}: ${labels[task.status]||task.status} (${Math.round(Number(task.elapsedMs||0)/1000)}s)`:"";};
+    const detail=document.createElement("small");detail.textContent=`${item.resolvedModel&&item.resolvedModel!==item.model?`Usou ${item.resolvedModel} · `:""}${[taskLabel("texts"),taskLabel("planning")].filter(Boolean).join(" · ")||`${item.elapsedMs||0} ms · ${item.reason||"Sem detalhe"}`}`;
+    row.append(name,status,detail);box.append(row);
+  }
+  $("hideFailedModels").disabled=!report?.results?.some(item=>!Object.values(item.tasks||{}).some(task=>task.status==="working")&&["unavailable","unstable","key_error"].includes(item.status));
+  $("showAllModels").disabled=!(modelPreferences.disabledModels||[]).length;applyModelVisibility();renderAllModelSummary();
 }
 
 async function newProject() {
@@ -654,10 +753,14 @@ async function regenerateField(key) {
 }
 
 $("newProject").onclick = $("emptyNew").onclick = () => newProject().catch(error => toast(error.message, true));
-$("apiSettings").onclick = () => { const selectedModel=currentWorkspace==="listing"?$("listingModel").value:$("model").value;const provider=providerForModel(selectedModel);if(provider!=="auto")$("keyProvider").value=provider;refreshKeyState().catch(error => toast(error.message, true)); $("apiDialog").showModal(); };
+$("apiSettings").onclick = () => { const selectedModel=currentWorkspace==="market"?$("marketModel").value:currentWorkspace==="listing"?$("listingModel").value:$("model").value;const provider=providerForModel(selectedModel);if(provider!=="auto")$("keyProvider").value=provider;refreshKeyState().catch(error => toast(error.message, true)); $("apiDialog").showModal(); };
 $("testKey").onclick = async () => { try { const candidate=dashboardKeyCandidate();$("testKey").disabled=true;$("keyTestStatus").textContent="Testando autenticação e acesso ao modelo…";const result=await send("testKey",{apiKey:$("apiKey").value,model:providerModel()});testedKeyCandidate=candidate;$("saveKey").disabled=false;$("keyTestStatus").textContent=result.modelAvailable?`Chave válida. O modelo ${result.model} está disponível.`:`Chave válida, mas o modelo ${result.model} não apareceu na conta.`;toast("Chave testada. Agora você pode salvá-la.");} catch(error){resetDashboardKeyTest(error.message);toast(error.message,true);} finally{$("testKey").disabled=!$("apiKey").value.trim();} };
 $("saveKey").onclick = async () => { try { if(testedKeyCandidate!==dashboardKeyCandidate())throw new Error("Teste esta chave antes de salvar.");await send("saveKey", {apiKey: $("apiKey").value,model:providerModel()}); $("apiKey").value = ""; testedKeyCandidate="";await refreshKeyState(); toast("API Key testada e salva."); } catch (error) { toast(error.message, true); } };
 $("removeKey").onclick = async () => { try { await send("forgetKey",{model:providerModel()}); $("apiKey").value=""; await refreshKeyState(); toast("API Key removida."); } catch (error) { toast(error.message, true); } };
+$("testAllModels").onclick=async()=>{const button=$("testAllModels");button.disabled=true;button.textContent="Verificando…";pollModelTestProgress();try{const result=await send("testAllModels");modelPreferences=result.modelPreferences;renderModelPreferences();const status=await send("modelTestStatus");renderModelVerificationProgress(status.progress,false);toast(`${result.providers.length} provedor(es) verificado(s). O automático usará somente modelos aprovados para cada tarefa.`);}catch(error){toast(error.message,true);}finally{clearTimeout(modelTestPollTimer);button.textContent="Verificar todos";button.disabled=!Object.values(keyStates).some(item=>item.saved);}};
+$("hideFailedModels").onclick=async()=>{try{modelPreferences=await send("modelPreferences",{hideFailed:true});renderModelPreferences();toast("Modelos incompatíveis ocultados.");}catch(error){toast(error.message,true);}};
+$("showAllModels").onclick=async()=>{try{modelPreferences=await send("modelPreferences",{showAll:true});renderModelPreferences();toast("Todos os modelos voltaram ao seletor.");}catch(error){toast(error.message,true);}};
+$("verifiedOnly").onchange=async()=>{try{modelPreferences=await send("modelPreferences",{useOnlyVerified:$("verifiedOnly").checked});renderModelPreferences();toast($("verifiedOnly").checked?"O automático usará somente modelos aprovados.":"O automático voltou a considerar modelos não testados.");}catch(error){toast(error.message,true);}};
 $("keyProvider").onchange=()=>refreshKeyState().catch(error=>toast(error.message,true));
 $("replaceSavedKey").onclick = () => { $("newKeyBox").hidden=false; $("saveKey").hidden=false; $("testKey").hidden=false; resetDashboardKeyTest();$("apiKey").focus(); };
 $("apiKey").addEventListener("input",()=>resetDashboardKeyTest());
@@ -684,8 +787,9 @@ $("addMissingFacts").onclick = () => {
 };
 for (const button of document.querySelectorAll(".tabs button")) button.onclick = () => switchTab(button.dataset.tab);
 for (const button of document.querySelectorAll("[data-workspace]")) button.onclick = () => {
-  currentWorkspace = button.dataset.workspace === "listing" ? "listing" : "aplus";
+  currentWorkspace = ["listing", "market"].includes(button.dataset.workspace) ? button.dataset.workspace : "aplus";
   renderWorkspaceVisibility();
+  if (currentWorkspace === "market") marketUI.tabs();
 };
 for (const button of document.querySelectorAll("[data-intel-tool]")) button.onclick = () => {
   switchIntelligenceTool(button.dataset.intelTool); markIntelligenceChanged();
@@ -751,7 +855,7 @@ $("batchAdd").onclick = async () => {
   catch (error) { toast(error.message, true); }
 };
 $("queueSelected").onclick = () => {
-  const ids = [...document.querySelectorAll(".queue-check:checked")].map(input => input.dataset.id);
+  const ids = [...selectedProjectIds];
   if (!ids.length && current()) ids.push(current().id);
   generate(ids).catch(error => toast(error.message, true));
 };
@@ -787,6 +891,19 @@ $("createPlan").onclick = async () => {
     const result = await send("projectPlan", {project}); projects = result.projects; activeId = result.activeProjectId; renderAll(); switchTab("texts"); toast("Textos A+ e prompts concluídos.");
   } catch (error) { toast(error.message, true); }
   finally { operationBusy=false; $("editor").inert=false; await refresh(); }
+};
+$("generateImageBriefs").onclick = async () => {
+  if (operationBusy || !current()) return;
+  operationBusy = true; $("editor").inert = true;
+  try {
+    const project = await save(false);
+    toast("Gerando o briefing completo das oito imagens…");
+    const result = await send("projectImageBriefs", {project});
+    projects = result.projects; activeId = result.activeProjectId; dirty = false;
+    renderAll(); switchTab("images"); $("fullBriefingDetails").open = true;
+    toast("Briefing completo salvo. Os textos A+ foram preservados.");
+  } catch (error) { toast(error.message, true); }
+  finally { operationBusy = false; $("editor").inert = false; await refresh(); }
 };
 $("copyAllPrompts").onclick = async () => {
   const project = current(), prompt = buildFullImagePrompt(project?.plan, project?.title); if (!prompt) return toast("Crie o planejamento primeiro.", true);
@@ -846,30 +963,48 @@ $("copyModuleRecording").onclick = async () => {
   try { await navigator.clipboard.writeText(text); toast("Relatório de montagem copiado."); }
   catch { toast("Não foi possível copiar o relatório de montagem.", true); }
 };
-$("fillAmazon").onclick = async () => {
+$("prepareAmazonModules").onclick = async () => {
   if (operationBusy) return;
   operationBusy = true;
-  const button = $("fillAmazon"), originalLabel = button.textContent;
-  button.disabled = true; button.textContent = "Verificando módulos…"; $("diagnoseAmazon").disabled = true;
+  const button = $("prepareAmazonModules");
+  button.disabled = true; button.textContent = "Adicionando módulos…";
+  $("fillAmazon").disabled = true; $("diagnoseAmazon").disabled = true;
   try {
     const project = await save(false), tabId = await sellerTabId();
     const preparation = await send("projectPrepareModules", {project, tabId});
-    amazonModulesReady = Boolean(preparation.ready);
-    if (!preparation.alreadyReady) {
-      switchTab("publish");
-      toast(`${preparation.addedModules} módulo(s) e ${preparation.addedRows} linha(s) adicionados. Revise a Amazon e clique novamente para preencher os textos.`);
-      return;
-    }
-    button.textContent = "Preenchendo…";
+    switchTab("publish");
+    if (!preparation.ready) throw new Error("A estrutura ainda não foi confirmada. Confira os módulos na Amazon ou use Solução de problemas.");
+    toast(preparation.alreadyReady
+      ? "Os módulos já estão prontos. Use Preencher textos na Amazon quando desejar."
+      : `${preparation.addedModules} módulo(s) e ${preparation.addedRows} linha(s) adicionados. Revise a estrutura; depois use Preencher textos na Amazon.`);
+  } catch (error) { toast(error.message, true); }
+  finally {
+    operationBusy = false; button.disabled = false; button.textContent = "Adicionar módulos";
+    $("fillAmazon").disabled = false; $("diagnoseAmazon").disabled = false;
+  }
+};
+$("fillAmazon").onclick = async () => {
+  if (operationBusy) return;
+  operationBusy = true;
+  const button = $("fillAmazon");
+  button.disabled = true; button.textContent = "Preenchendo…";
+  $("prepareAmazonModules").disabled = true; $("diagnoseAmazon").disabled = true;
+  try {
+    const project = await save(false);
+    if (!project?.approved) throw new Error("Aprove o projeto antes de preencher os textos na Amazon.");
+    const tabId = await sellerTabId();
     const report = await send("projectFill", {project, tabId});
-    await refresh(); switchTab("publish");
+    // Read the persisted report now: periodic refresh is paused while an operation runs.
+    const result = await send("projectList");
+    projects = result.projects; activeId = result.activeProjectId; projectJob = result.projectJob; dirty = false;
+    renderAll(); switchTab("publish");
     if (!report.filled) toast("Nenhum campo foi confirmado. Veja o relatório detalhado abaixo do diagnóstico.", true);
     else if (report.failed) toast(`${report.filled} de ${report.total} campos confirmados; ${report.failed} falha(s) detalhada(s) no relatório.`, true);
     else toast(`${report.filled} de ${report.total} campos confirmados. Revise antes de salvar na Amazon.`);
-  }
-  catch (error) { toast(error.message, true); }
+  } catch (error) { toast(error.message, true); }
   finally {
-    operationBusy = false; button.disabled = false; button.textContent = amazonModulesReady ? "Preencher textos" : originalLabel; $("diagnoseAmazon").disabled = false;
+    operationBusy = false; button.disabled = false; button.textContent = "Preencher textos na Amazon";
+    $("prepareAmazonModules").disabled = false; $("diagnoseAmazon").disabled = false;
   }
 };
 $("diagnoseAmazon").onclick = async () => {
@@ -912,10 +1047,11 @@ $("exportTexts").onclick = () => {
 async function initializePanel() {
   const label = document.querySelector(".topbar h1");
   $("listingModel").replaceChildren(...[...$("model").options].map(option => option.cloneNode(true)));
-  label.textContent = "A+ Studio · painel 1.5.16";
+  $("marketModel").replaceChildren(...[...$("model").options].map(option => option.cloneNode(true)));
+  label.textContent = "A+ Studio · painel 1.5.24";
   try {
     const hello = await send("panelHello");
-    if (hello.version !== "1.5.16") throw new Error(`Painel 1.5.16 conectado à extensão ${hello.version}. Substitua os arquivos na pasta instalada e recarregue a extensão.`);
+    if (hello.version !== "1.5.24") throw new Error(`Painel 1.5.24 conectado à extensão ${hello.version}. Substitua os arquivos na pasta instalada e recarregue a extensão.`);
     label.textContent = `A+ Studio · ${hello.version} conectado`;
     await refresh();
     const recorderState = await send("projectModuleRecordStatus");
@@ -925,4 +1061,17 @@ async function initializePanel() {
     toast(error.message, true);
   }
 }
+const marketUI = mountMarketWorkspace({current, send, save, toast, changed: () => {dirty = true;}, run: async tool => {
+  if (operationBusy) return;
+  operationBusy = true;
+  const blocked = [$("marketWorkspace"), $("editor"), $("listingWorkspace"), document.querySelector(".sidebar")].filter(Boolean);
+  for (const node of blocked) node.inert = true;
+  try {
+    const project = await save(false);
+    const result = await send("marketGenerate", {project, tool});
+    projects = result.projects; activeId = result.activeProjectId; dirty = false; renderAll();
+    toast("Relatório salvo neste produto.");
+  } catch (error) {toast(error.message, true);}
+  finally {operationBusy = false; for (const node of blocked) node.inert = false; await refresh();}
+}});
 initializePanel();

@@ -1,7 +1,8 @@
+import {migrateModel} from "./providers.js";
 import {strategyPrompt} from "./strategy.js";
 
 // Regras compartilhadas pelo popup, pelo worker e pelos testes. Sem dependências externas.
-export const DEFAULTS = Object.freeze({model: "auto/economico", faqCount: 5, specCount: 6,
+export const DEFAULTS = Object.freeze({model: "xkiro/auto-quality", faqCount: 5, specCount: 6,
   strategyMode: "auto", templateMode: "auto", customStrategy: "", planningFocus: "commercial", returnRiskNotes: ""});
 
 export const SELLER_HOSTS = Object.freeze([
@@ -20,7 +21,7 @@ export const APLUS_PREMIUM_EDITOR_URL = "https://sellercentral.amazon.com/enhanc
 export function settings(input = {}) {
   const integer = (value, fallback, max) => Number.isInteger(Number(value)) &&
     Number(value) >= 1 && Number(value) <= max ? Number(value) : fallback;
-  const model = String(input.model || DEFAULTS.model).trim();
+  const model = migrateModel(String(input.model || DEFAULTS.model).trim());
   if (!/^[a-zA-Z0-9._:/-]{1,100}$/.test(model)) throw new Error("Informe um nome de modelo válido.");
   const allowedStrategies = new Set(["auto", "emotional", "practical", "technical", "premium", "conservative", "custom"]);
   const allowedTemplates = new Set(["auto", "infantil", "pet", "eletronico", "moda", "saude", "ferramenta", "esporte", "automotivo", "viagem", "beleza", "casa", "generic"]);

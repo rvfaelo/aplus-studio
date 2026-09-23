@@ -1,3 +1,4 @@
+import {migrateModel} from "./providers.js";
 const clean = (value, max = 20000) => String(value ?? "").normalize("NFC")
   .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f\u200b-\u200f\u202a-\u202e\u2066-\u2069]/g, " ")
   .replace(/[ \t]+/g, " ").replace(/\n{3,}/g, "\n\n").trim().slice(0, max);
@@ -149,7 +150,7 @@ export function normalizeListingWorkspace(value = {}) {
   const source = value && typeof value === "object" ? value : {};
   const draft = source.draft && typeof source.draft === "object" ? source.draft : {};
   return {
-    model: oneLine(source.model, 100) || "auto/economico",
+    model: migrateModel(oneLine(source.model, 100)),
     activeTool: enumValue(source.activeTool, ["reviews", "optimizer"], "reviews"),
     draft: {
       reviews: clean(draft.reviews, 60000),

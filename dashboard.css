@@ -43,3 +43,33 @@ label{display:block;font-size:11px;font-weight:800;color:#455950;margin:13px 0 6
 dialog{border:0;border-radius:16px;padding:0;box-shadow:0 24px 80px rgba(20,37,30,.24);width:min(500px,90vw)}dialog::backdrop{background:rgba(18,34,27,.52);backdrop-filter:blur(2px)}.dialog-card{padding:22px}.dialog-card input{width:100%}.dialog-card h3{margin:0}.dialog-card .card-head button{border:0;font-size:20px;padding:2px 7px;min-height:30px}#savedKeyMask{background:#f0f3f1;color:#5a6761;cursor:default;font-family:Consolas,monospace;margin-bottom:8px}
 @media(max-width:1180px){.grid.two,.strategy-layout,.intelligence-input-grid{grid-template-columns:1fr}.workspace{padding:24px 22px 48px}.facts-head,.fact-row{grid-template-columns:1fr 1.35fr 1fr 110px 48px}.intelligence-result-card{position:static;max-height:none}.topbar{gap:10px}.app-switcher button{padding:6px 9px}.job-status{display:none}}
 @media(max-width:1180px){.strategy-layout{grid-template-columns:1fr}}
+/* Market tools share the Studio form system and remain isolated from A+. */
+#mainContent { min-width:0; }
+#marketWorkspace { min-width:0; max-width:100%; }
+#marketWorkspace .card-head { flex-wrap:wrap; align-items:center; }
+.market-form-grid input,.market-form-grid textarea { width:100%; }
+.market-tool-nav { display:flex; gap:8px; flex-wrap:wrap; margin:20px 0; }
+.market-tool-nav button.active { background:#b2e146; color:#18200f; border-color:#91b937; }
+.market-form-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:16px; margin:16px 0; }
+.market-form-grid > div { min-width:0; }
+.market-costs { grid-template-columns:repeat(3,minmax(0,1fr)); }
+.market-capture-bar { display:flex; flex-wrap:wrap; align-items:center; gap:8px; margin:12px 0; }
+.market-capture-bar select { flex:1 1 220px; min-width:0; max-width:100%; }
+.market-table-wrap { overflow:auto; max-width:100%; margin:12px 0; }
+.market-table { border-collapse:collapse; width:100%; min-width:1000px; }
+.market-inventory { min-width:600px; }
+.market-table th,.market-table td { padding:8px; text-align:left; vertical-align:top; border-bottom:1px solid #dce2df; }
+.market-table th { font-size:12px; font-weight:600; }
+.market-table td:first-child { min-width:155px; }
+.market-table input,.market-table textarea { width:100%; min-width:90px; margin:0; }
+.market-table small { display:block; max-width:150px; font-size:11px; overflow-wrap:anywhere; }
+.market-output { border-top:1px solid #dce2df; padding-top:20px; margin-top:20px; }
+#marketReport { white-space:pre-wrap; overflow-wrap:anywhere; font:inherit; line-height:1.65; }
+#marketStale { border-left:3px solid #b2e146; padding-left:12px; }
+@media(max-width:700px) { .market-form-grid,.market-costs { grid-template-columns:minmax(0,1fr); } }
+.model-verification-hub{margin:18px 0 22px;padding:18px;border:1px solid #d6e5b3;border-radius:14px;background:linear-gradient(145deg,#fbfef4,#f4f9e8)}
+.model-verification-head{display:flex;align-items:flex-start;justify-content:space-between;gap:18px}.model-verification-head h4,.key-editor h4{margin:3px 0 5px;font-size:15px}.model-verification-head p{margin:0;max-width:420px;color:#5d6b63;font-size:11px;line-height:1.5}.model-verification-head button{flex:0 0 auto;min-height:42px;padding-inline:18px}
+.model-verification-progress{margin:14px 0 10px;padding:11px 12px;border:1px solid #dbe5d4;border-radius:10px;background:#fff}.model-verification-progress>div{display:flex;justify-content:space-between;gap:12px;margin-bottom:8px;font-size:10px}.model-verification-progress span{color:#6d7a74;font-weight:800}.model-verification-progress progress{display:block;width:100%;height:8px;border:0;border-radius:999px;overflow:hidden;accent-color:#91bd25}.model-verification-progress progress::-webkit-progress-bar{background:#edf1ef}.model-verification-progress progress::-webkit-progress-value{background:#9bc92f}
+.all-model-summary{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:7px;margin:13px 0}.model-provider-summary{display:flex;align-items:center;justify-content:space-between;gap:10px;min-width:0;min-height:42px;padding:9px 10px;text-align:left;background:#fff;border-color:#dce5d8}.model-provider-summary strong{font-size:10px;white-space:nowrap}.provider-summary-state{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#6e7b74;font-size:9px;font-weight:800}.provider-summary-state.working{color:#527718}.provider-summary-state.partial,.provider-summary-state.stale{color:#946516}.provider-summary-state.error{color:#a04435}.model-verification-note{margin:9px 1px 0;color:#6d7a74;font-size:10px;line-height:1.45}
+.key-editor{padding-top:2px}.key-editor .section-heading{margin-bottom:8px}.provider-model-details{margin-top:20px;border-top:1px solid #dce4df;padding-top:15px}.provider-model-details>summary{cursor:pointer;color:#465a50;font-size:11px;font-weight:800}.model-test-results{display:grid;gap:7px;margin:12px 0}.model-test-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;padding:9px;border:1px solid #dce4df;border-radius:8px}.model-test-row small{grid-column:1/-1;color:#56685f}.model-test-status{font-size:11px;font-weight:800}.model-test-status.working{color:#3d681f}.model-test-status.partial{color:#7f5a15}.model-test-status.unavailable{color:#9a3027}.model-test-status.temporary,.model-test-status.unstable{color:#7f5a15}
+@media(max-width:600px){.model-verification-head{display:grid}.model-verification-head button{width:100%}.all-model-summary{grid-template-columns:1fr}.model-provider-summary{width:100%}}

@@ -1,3 +1,57 @@
+# Verificação da entrega 1.5.24 — 23/09/2026
+
+154 testes de regressão passaram (`npm test`). O novo cenário confirma que **Verificar todos** identifica somente os provedores com chave salva, testa todos os modelos configurados em Textos A+ e Briefings, ativa o uso de aprovados e publica o progresso até a conclusão. A estrutura da interface também verifica que o botão global fica antes da configuração individual do provedor.
+
+Os conectores sensíveis da Amazon (`content.js`, `content-engine.js`, `page-writer.js`, `module-automation.js` e `diagnostics.js`) permanecem binariamente idênticos à 1.5.23. `panel-connection.js` mudou somente para conceder ao novo comando global o mesmo prazo longo já usado no teste individual. APIs externas foram simuladas; nenhuma chave ou cota real foi usada. A verificação visual automatizada não iniciou porque o executável do Chromium não está instalado neste ambiente; a ordem e todos os IDs da nova interface estão cobertos pelos testes estáticos.
+
+## Registro da entrega 1.5.23 — 23/09/2026
+
+153 testes de regressão passaram (`npm test`). Os novos cenários cobrem limite de dois modelos no automático, exclusão efetiva de modelos em quarentena, teste JSON separado para Textos A+ e briefings, aprovação por tarefa, timeout de conexão/fluxo e a política que permite texto visual somente nas Duas imagens.
+
+Os conectores sensíveis da Amazon (`content.js`, `content-engine.js`, `page-writer.js`, `module-automation.js`, `diagnostics.js` e `panel-connection.js`) permanecem binariamente idênticos à 1.5.22. APIs externas foram simuladas; nenhuma chave ou cota real foi usada. A verificação em Chromium não iniciou porque o executável do navegador não está instalado neste ambiente; isso é uma limitação do ambiente, não uma falha encontrada na extensão.
+
+## Registro da entrega 1.5.22 — 23/09/2026
+
+151 testes de regressão passaram (`npm test`). Os novos cenários verificam reaproveitamento de sucesso entre tarefas, prazo adaptativo, quarentena de 30 minutos/6 horas, exclusão de modelos até 8B em tarefas estruturadas, alternância de provedores, chegada ao fallback Groq validado e continuação do catálogo após um modelo devolver 403.
+
+Os conectores de leitura, diagnóstico, montagem e escrita da Amazon permanecem binariamente idênticos à 1.5.21. Provedores externos foram simulados; nenhuma chave real ou cota foi utilizada.
+
+## Registro da entrega 1.5.21 — 22/09/2026
+
+147 testes de regressão passaram (`npm test`). Os novos testes cobrem identificação e IDs da DeepSeek, catálogo oficial, geração mínima por modelo, classificação de modelo funcional, sem acesso e limite temporário, ausência de vazamento da chave e filtragem de opções incompatíveis/aprovadas no modo automático.
+
+Os quatro conectores sensíveis da Amazon (`content.js`, `content-engine.js`, `page-writer.js` e `module-automation.js`) permanecem binariamente idênticos à 1.5.20. Nenhuma conta real, chave externa ou cobrança foi usada: as APIs foram simuladas. A verificação visual automatizada não pôde ser repetida neste ambiente porque o executável Chromium não estava disponível; a estrutura da interface e todos os IDs usados pelo JavaScript estão cobertos pelos testes estáticos.
+
+## Registro da entrega 1.5.20 — 19/09/2026
+
+142 testes de regressão (`npm test`) e 18 grupos de verificações de interface (`npm run test:ui`), sem erros JavaScript não tratados. A interface foi testada no Chromium com as páginas reais da extensão e transporte Chrome simulado, em desktop e a 390 px. Foram geradas 20 capturas de tela para inspeção; os resultados estão em `tests/UI-VERIFICACAO.json`.
+
+Novos cenários: normalização de preços brasileiros; campos desconhecidos distintos de zero; limites de URL; captura de busca e produto em DOM simulado, sem duplicados/ocultos e com detecção de captcha; comparação por unidade somente com quantidade confirmada; composição de kits com custo e estoque calculados localmente; rejeição de SKU inventado/duplicado, estoque insuficiente e quantidades fracionárias; geração das três ferramentas; persistência por produto; relatórios independentes e amostra de origem; aviso de dados alterados; cópia e exportação; preservação em falha/cancelamento; preservação de alterações feitas em outro painel durante a geração.
+
+Comparação binária com a 1.5.19: `content.js`, `content-engine.js`, `page-writer.js` e `module-automation.js` permanecem idênticos. Sem novas permissões ou dependências de produção. Os testes de regressão existentes de mapeamento, diagnóstico e escrita continuam incluídos.
+
+Limites: sem chamadas a provedores com chaves reais, sem conta Amazon real. A captura foi conferida com páginas simuladas; mudanças do site, captcha, promoções e preços por variação precisam ser verificados no uso real. A qualidade comercial de uma resposta gerada não é medida por esses testes.
+
+## Registro da entrega 1.5.19 — 17/09/2026
+
+128 testes de regressão passaram (`npm test`); 16 grupos de verificações de interface passaram (`npm run test:ui`). O monitor foi conferido visualmente no Chromium. APIs e transporte Chrome simulados, sem credenciais reais. Falha no armazenamento de métricas auxiliares não perde conteúdo validado.
+
+Novos cenários: seleção gratuita com preço zero e catálogo publicado, autenticação via endpoint protegido do OpenRouter, bloqueio de modelo pago, pontuação por tarefa, histórico de sucesso/velocidade, migração dos quatro modelos removidos, padrão xKiro, cancelamento durante requisição, cancelamento de catálogo, limite total, rejeição de resposta tardia, progresso consultável com editor bloqueado, histórico sem segredos e liberação para nova tentativa sem perder o projeto. A chave legada Groq não é enviada ao xKiro por causa da mudança de padrão.
+
+Os conectores de leitura/escrita/montagem da Amazon não foram alterados. A conta real do Seller Central e a disponibilidade dos provedores não foram testadas.
+
+## Registro da entrega 1.5.17
+
+128 testes de regressão passaram (`npm test`). O teste de interface (`npm run test:ui`) passou em 16 grupos de verificações, sem erros JavaScript não tratados. Resultado em `tests/UI-VERIFICACAO.json`.
+
+A checkbox foi reproduzida falhando na 1.5.16: a seleção era perdida após a atualização periódica. O mesmo cenário passa nesta versão, junto com busca, troca de produto, seleção fora do filtro e desmarcação intencional.
+
+Os testes cobrem texto minimalista em ambos os focos, preferência por close-ups, adaptação não destrutiva de prompts anteriores, briefing independente sem reescrever textos ou aprovação, preservação integral do projeto em erro de API e nova tentativa após a falha. A interface verifica a separação entre montagem e preenchimento e a exibição imediata do relatório.
+
+Testes locais usam APIs simuladas. Não foi exercitada a instalação completa da extensão, a conta real do Seller Central ou uma API externa. Não representam uma garantia de funcionamento na Amazon real. Nenhuma chave de usuário foi usada.
+
+## Registros históricos de verificação
+
 # Verificação da interface 1.5.15
 
 106 testes de regressão aprovados. Teste adicional: `npm run test:ui`.

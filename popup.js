@@ -1,7 +1,8 @@
 import {DEFAULTS, makeSlots} from "./shared.js";
+import {mountGenerationMonitor} from "./generation-ui.js";
 import {normalizeAsins, auditLabel} from "./catalog-audit.js";
-import {buildFullImagePrompt} from "./planning.js";
-import {providerForModel} from "./providers.js";
+import {buildFullImagePrompt, imagePromptForBrief} from "./planning.js";
+import {providerForModel, migrateModel} from "./providers.js";
 
 const $ = id => document.getElementById(id);
 let latest = null, locked = false, renderedVersion = "", savedKey = false, pollTimer;
@@ -13,9 +14,9 @@ let keyStates={},cloudKeyStates={};
 let auditLatest = null, auditItems = [], auditLocked = false;
 let planningLatest = null, planResult = null, qualityResult = null, planningLocked = false;
 const editableFields = ["title", "description", "model", "customModel", "faqCount", "specCount", "apiKey", "cloudPassphrase"];
-const MODEL_MIGRATIONS = Object.freeze({"gemini/gemini-2.5-flash":"gemini/gemini-3.5-flash","gemini/gemini-2.5-flash-lite":"gemini/gemini-3.5-flash-lite","tokenrouter/z-ai/glm-5.3-free":"kira/glm-5.3-free","deepseek/deepseek-flash":"xkiro/auto-quality"});
+
 const selectedModel = () => $("model").value === "custom" ? $("customModel").value.trim() : $("model").value;
-const providerModel=()=>({openai:"openai-api/gpt-5.6-luna",gemini:"gemini/gemini-3.5-flash",kira:"kira/qwen3.8-flash",groq:"openai/gpt-oss-20b",xkiro:"xkiro/auto-quality"})[$("keyProvider").value];
+const providerModel=()=>({openai:"openai-api/gpt-5.6-luna",gemini:"gemini/gemini-3.5-flash",kira:"kira/qwen3.8-flash",groq:"openai/gpt-oss-20b",xkiro:"xkiro/auto-quality",openrouter:"openrouter/auto-free",deepseek:"deepseek/deepseek-v4-flash"})[$("keyProvider").value];
 const selectedProvider=()=>providerForModel(selectedModel())==="auto"?"gemini":providerForModel(selectedModel());
 const selectProviderState=()=>{const provider=$("keyProvider").value,local=keyStates[provider]||{} ,cloud=cloudKeyStates[provider]||{};replaceMode=false;resetKeyTest();keyState(!!local.saved,local.fingerprint);cloudKeyState(!!cloud.saved,cloud.fingerprint);};
 const rawConfig = () => ({model: selectedModel(), faqCount: Number($("faqCount").value), specCount: Number($("specCount").value)});
@@ -29,6 +30,7 @@ async function send(action, data = {}) {
   if (!reply?.ok) throw new Error(reply?.error || "A extensão não respondeu. Reabra o popup.");
   return reply.data;
 }
+mountGenerationMonitor(send);
 async function tabId() {
   const [tab] = await chrome.tabs.query({active: true, currentWindow: true});
   if (!tab?.id) throw new Error("Nenhuma aba ativa encontrada.");
@@ -153,8 +155,8 @@ function renderPlan(plan = planResult) {
   for (const item of planResult.featureBenefits || []) addPlanRow(benefits, item.feature, [item.benefit, `Base: ${item.evidence}`]);
   $("benefitsTitle").textContent = `Características e benefícios (${planResult.featureBenefits?.length || 0})`;
   const briefs = $("briefsReport"); briefs.replaceChildren();
-  for (const item of planResult.imageBriefs || []) addPlanRow(briefs, `${item.module} · ${item.size}`,
-    [`Objetivo: ${item.goal}`, `Cena: ${item.scene}`, `Composição: ${item.composition}`], item.prompt);
+  for (const [index, item] of (planResult.imageBriefs || []).entries()) addPlanRow(briefs, `${item.module} · ${item.size}`,
+    [`Objetivo: ${item.goal}`, `Cena: ${item.scene}`, `Composição: ${item.composition}`], imagePromptForBrief(item, index));
   $("briefsTitle").textContent = `Briefings de imagens (${planResult.imageBriefs?.length || 0})`;
   $("planningBadge").textContent = "Plano pronto"; $("planningBadge").className = "key-status ok";
 }
@@ -299,6 +301,7 @@ function render(job, scanOnly = null) {
 
 async function refresh(initial = false) {
   const data = await send("status"); latest = data.job; keyStates=data.keyStates||{gemini:{saved:data.keySaved,fingerprint:data.keyFingerprint}};cloudKeyStates=data.cloudKeyStates||{gemini:{saved:data.cloudKeySaved,fingerprint:data.cloudKeyFingerprint}};
+  const disabledModels=new Set(data.modelPreferences?.disabledModels||[]);for(const option of $("model").options)if(!option.value.startsWith("divider-")&&option.value!=="auto/economico"&&option.value!=="custom")option.hidden=disabledModels.has(option.value);
   auditLatest = data.auditJob || null;
   auditItems = data.auditItems || [];
   planningLatest = data.planningJob || null;
@@ -312,11 +315,11 @@ async function refresh(initial = false) {
     $("faqCount").value = form?.faqCount ?? cfg.faqCount; $("specCount").value = form?.specCount ?? cfg.specCount;
     const models = [...$("model").options].map(option => option.value);
     const savedChoice = form?.modelChoice ?? cfg.model;
-    const choice = MODEL_MIGRATIONS[savedChoice] || savedChoice;
+    const choice = migrateModel(savedChoice);
     if (models.includes(choice) && choice !== "custom") $("model").value = choice;
     else $("model").value = "custom";
     const savedCustom = form?.customModel ?? (models.includes(cfg.model) ? "" : cfg.model);
-    $("customModel").value = MODEL_MIGRATIONS[savedCustom] || savedCustom;
+    $("customModel").value = savedCustom ? migrateModel(savedCustom) : "";
     $("customModel").hidden = $("model").value !== "custom";
     $("keyProvider").value=selectedProvider();
     initialized = true;
@@ -573,8 +576,8 @@ $("planningExport").onclick = () => {
     `Problema principal: ${d.main_problem || ""}`, `Benefício central: ${d.central_benefit || ""}`, `Resumo: ${d.summary || ""}`, "",
     "INFORMAÇÕES AUSENTES", ...(planResult.missingInformation || []).flatMap(item => [`${item.field}: ${item.reason}`]), "",
     "CARACTERÍSTICAS E BENEFÍCIOS", ...(planResult.featureBenefits || []).flatMap(item => [item.feature, `Benefício: ${item.benefit}`, `Base: ${item.evidence}`, ""]),
-    "BRIEFINGS DE IMAGENS", ...(planResult.imageBriefs || []).flatMap(item => [item.module, `Tamanho: ${item.size}`, `Objetivo: ${item.goal}`,
-      `Cena: ${item.scene}`, `Composição: ${item.composition}`, `Prompt: ${item.prompt}`, ""]),
+    "BRIEFINGS DE IMAGENS", ...(planResult.imageBriefs || []).flatMap((item, index) => [item.module, `Tamanho: ${item.size}`, `Objetivo: ${item.goal}`,
+      `Cena: ${item.scene}`, `Composição: ${item.composition}`, `Prompt: ${imagePromptForBrief(item, index)}`, ""]),
     "OBSERVAÇÕES", ...(planResult.notes || [])];
   const blob = new Blob(["\ufeff" + lines.join("\r\n")], {type: "text/plain;charset=utf-8"});
   const url = URL.createObjectURL(blob), link = document.createElement("a"); link.href = url; link.download = "planejamento-aplus.txt";

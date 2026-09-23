@@ -33,7 +33,7 @@ export function connectPanel(runtime) {
       const timer = setTimeout(() => {
         pending.delete(requestId);
         reject(new Error(`Sem resposta ao comando ${action}. Confira a versão no painel e recarregue a extensão. A operação pode ainda estar em andamento.`));
-      }, ["projectPlan", "projectRegenerate", "projectFill"].includes(action) ? 600000 : 30000);
+      }, ["projectPlan", "projectImageBriefs", "projectRegenerate", "projectFixRepetitions", "listingAnalyze", "listingOptimize", "marketGenerate", "testModels", "testAllModels", "projectFill", "projectPrepareModules"].includes(action) ? 210000 : 30000);
       pending.set(requestId, {resolve, reject, timer});
       opened.postMessage({...data, channel: "aplus-extension", action, requestId});
     } catch {

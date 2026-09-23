@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "A+ Studio | Planejar, Gerar e Auditar",
-  "version": "1.5.16",
-  "description": "Cria conteúdo A+ e, em área separada, analisa avaliações e otimiza anúncios da Amazon.",
+  "version": "1.5.24",
+  "description": "Cria A+, analisa avaliações, otimiza anúncios e oferece pesquisa de produtos, comparação de concorrentes e planejamento de kits.",
   "icons": {
     "16": "icons/icon16.png",
     "32": "icons/icon32.png",
@@ -44,7 +44,9 @@
     "https://sellercentral.amazon.ae/*",
     "https://sellercentral.amazon.sa/*",
     "https://sellercentral.amazon.com.tr/*",
-    "https://sellercentral.amazon.co.za/*"
+    "https://sellercentral.amazon.co.za/*",
+    "https://openrouter.ai/*",
+    "https://api.deepseek.com/*"
   ],
   "background": {
     "service_worker": "background.js",
@@ -95,6 +97,6 @@
     }
   },
   "content_security_policy": {
-    "extension_pages": "script-src 'self'; object-src 'none'; connect-src https://api.openai.com https://api.groq.com https://generativelanguage.googleapis.com https://kiraai.vn https://api.xkiro.com https://www.amazon.com.br"
+    "extension_pages": "script-src 'self'; object-src 'none'; connect-src https://api.openai.com https://api.groq.com https://generativelanguage.googleapis.com https://kiraai.vn https://api.xkiro.com https://openrouter.ai https://api.deepseek.com https://www.amazon.com.br"
   }
 }
